@@ -2,6 +2,20 @@
 
 All notable changes to pi-goal-x are documented here.
 
+## [Unreleased]
+
+### Added
+
+- **Global goal settings shared across projects** — pi-goal-x now loads
+  `~/.pi/agent/pi-goal-x-settings.json` before the existing project file
+  `.pi/pi-goal-x-settings.json`. Project values override global values
+  (including explicit `false` and `0`), and environment variables remain the
+  highest-precedence layer. `/goal-settings` can switch between editing the
+  project and global files; `/goal-status verbose` reports per-setting
+  provenance. `PI_GOAL_GLOBAL_SETTINGS_FILE` can override the global path.
+
+Spec: specs/2026-08-13-global-goal-settings/
+
 ## [0.27.4] — 2026-08-11
 
 ### Fixed

@@ -368,13 +368,16 @@ Each session can focus on one goal while the project keeps other goals open.
 
 ## Configuration
 
-Settings are stored in:
+Settings are layered, following pi's own global-vs-project convention. Project settings override global settings (including explicit `false` and `0` values); environment variables override both:
 
-```text
-.pi/pi-goal-x-settings.json
-```
+| Location | Scope |
+|----------|-------|
+| `~/.pi/agent/pi-goal-x-settings.json` | Global (all projects) |
+| `.pi/pi-goal-x-settings.json` | Project (current directory) |
 
-Use `/goal-settings` to configure task lists, verification contracts, subtask depth, automatic goal selection, and completion auditing. Goal objectives have no hard length limit by default; set `objectiveMaxChars` (or `PI_GOAL_OBJECTIVE_MAX_CHARS`, `0` = no limit) to cap objective length across `create_goal`, `propose_goal_draft`, and `/goal-tweak`.
+Use `/goal-settings` to configure task lists, verification contracts, subtask depth, automatic goal selection, and completion auditing. The menu's top row switches between editing the project file and the global file. Goal objectives have no hard length limit by default; set `objectiveMaxChars` (or `PI_GOAL_OBJECTIVE_MAX_CHARS`, `0` = no limit) to cap objective length across `create_goal`, `propose_goal_draft`, and `/goal-tweak`.
+
+Set `PI_GOAL_SETTINGS_FILE` to point at an alternative project settings file, or `PI_GOAL_GLOBAL_SETTINGS_FILE` to point at an alternative global settings file.
 
 Configure the task shortcuts in the same file when the terminal captures the defaults:
 
