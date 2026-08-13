@@ -4,9 +4,13 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { extractVerificationContract, sisyphusObjectiveSufficient } from "./goal-contract.ts";
 import { detailedSummary, oneLineSummary } from "./goal-format.ts";
 import {
+	goalGlobalSettingsPath,
 	goalSettingsPath,
+	loadGoalGlobalSettingsFileConfig,
 	loadGoalSettings,
 	loadGoalSettingsFileConfig,
+	loadGoalSettingsFileConfigMerged,
+	saveGoalGlobalSettingsFileConfig,
 	saveGoalSettingsFileConfig,
 	type GoalSettings,
 } from "./goal-settings.ts";
@@ -249,7 +253,7 @@ export function registerGoalCommands(core: GoalCore): void {
 
 	/** Stable fingerprint of the effective settings (cache-served before invalidation). */
 	function settingsFingerprint(ctx: ExtensionContext): string {
-		return JSON.stringify(loadGoalSettingsFileConfig(ctx.cwd));
+		return JSON.stringify(loadGoalSettingsFileConfigMerged(ctx.cwd));
 	}
 
 	async function showGoalStatus(rawArgs: string, ctx: ExtensionContext): Promise<void> {
@@ -393,7 +397,7 @@ export function registerGoalCommands(core: GoalCore): void {
 
 	async function handleSettingsMenu(ctx: ExtensionContext): Promise<void> {
 		if (!ctx.hasUI) {
-			ctx.ui.notify(`Settings file: ${goalSettingsPath(ctx.cwd)}`, "info");
+			ctx.ui.notify(`Settings file: ${goalSettingsPath(ctx.cwd)}\nGlobal settings file: ${goalGlobalSettingsPath()}`, "info");
 			return;
 		}
 		/**
@@ -404,8 +408,13 @@ export function registerGoalCommands(core: GoalCore): void {
 		 * off within one menu session reinstalls on every real change instead of
 		 * comparing against the value captured when the menu opened.
 		 */
+		type SettingsScope = "project" | "global";
+		let scope: SettingsScope = "project";
+		const configForScope = (): GoalSettings =>
+			scope === "global" ? loadGoalGlobalSettingsFileConfig() : loadGoalSettingsFileConfig(ctx.cwd);
 		const saveSettings = (next: GoalSettings): void => {
-			saveGoalSettingsFileConfig(ctx.cwd, next);
+			if (scope === "global") saveGoalGlobalSettingsFileConfig(next);
+			else saveGoalSettingsFileConfig(ctx.cwd, next);
 			const tasksEnabledNow = !loadGoalSettings(ctx.cwd).disableTasks;
 			if (tasksEnabledNow !== core.tasksEnabled) {
 				core.installGoalToolProfile(tasksEnabledNow);
@@ -414,8 +423,11 @@ export function registerGoalCommands(core: GoalCore): void {
 		core.enterGoalModal();
 		try {
 			while (true) {
-				const config = loadGoalSettingsFileConfig(ctx.cwd);
-				const options: string[] = [];
+				const config = configForScope();
+				const scopeLabel = scope === "global"
+					? `Scope: global (${goalGlobalSettingsPath()})`
+					: `Scope: project (${goalSettingsPath(ctx.cwd)})`;
+				const options: string[] = [scopeLabel];
 				let lastSection: string | null = null;
 				for (const row of SETTING_ROWS) {
 					if (row.section !== lastSection) {
@@ -428,6 +440,10 @@ export function registerGoalCommands(core: GoalCore): void {
 				options.push("Done");
 				const selected = await ctx.ui.select("Goal settings", options);
 				if (!selected || selected === "Done") break;
+				if (selected === scopeLabel) {
+					scope = scope === "project" ? "global" : "project";
+					continue;
+				}
 				if (selected.startsWith("───")) continue; // section headers are not rows
 				// Strip leading spaces and resolve the row from the display label.
 				const selectedTrimmed = selected.trim();
@@ -444,7 +460,7 @@ export function registerGoalCommands(core: GoalCore): void {
 			if (row.kind === "boolean") {
 				const next = { ...config, [key]: config[key] !== true };
 				saveSettings(next);
-				ctx.ui.notify(`Settings saved:\n${settingsLines(loadGoalSettingsFileConfig(ctx.cwd)).join("\n")}`, "info");
+				ctx.ui.notify(`Settings saved:\n${settingsLines(configForScope()).join("\n")}`, "info");
 				continue;
 			}
 			if (row.kind === "positiveInteger") {
@@ -463,7 +479,7 @@ export function registerGoalCommands(core: GoalCore): void {
 				}
 				const next = { ...config, [key]: Number(trimmed) };
 				saveSettings(next);
-				ctx.ui.notify(`Settings saved:\n${settingsLines(loadGoalSettingsFileConfig(ctx.cwd)).join("\n")}`, "info");
+				ctx.ui.notify(`Settings saved:\n${settingsLines(configForScope()).join("\n")}`, "info");
 				continue;
 			}
 			if (row.kind === "thinking") {
@@ -482,7 +498,7 @@ export function registerGoalCommands(core: GoalCore): void {
 					continue;
 				}
 				saveSettings(next);
-				ctx.ui.notify(`Settings saved:\n${settingsLines(loadGoalSettingsFileConfig(ctx.cwd)).join("\n")}`, "info");
+				ctx.ui.notify(`Settings saved:\n${settingsLines(configForScope()).join("\n")}`, "info");
 				continue;
 			}
 			// modelSelector rows (provider, model): searchable auditor model
@@ -519,7 +535,7 @@ export function registerGoalCommands(core: GoalCore): void {
 				next.model = choice.model;
 			}
 			saveSettings(next);
-			ctx.ui.notify(`Settings saved:\n${settingsLines(loadGoalSettingsFileConfig(ctx.cwd)).join("\n")}`, "info");
+			ctx.ui.notify(`Settings saved:\n${settingsLines(configForScope()).join("\n")}`, "info");
 			}
 		} finally {
 			core.exitGoalModal();

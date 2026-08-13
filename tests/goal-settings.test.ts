@@ -13,10 +13,14 @@ import {
 	type GoalRecord,
 } from "../extensions/goal-record.ts";
 import {
+	goalGlobalSettingsPath,
 	goalSettingsPath,
 	parseGoalSettings,
+	loadGoalGlobalSettingsFileConfig,
 	loadGoalSettingsFileConfig,
+	loadGoalSettingsFileConfigMerged,
 	loadGoalSettings,
+	saveGoalGlobalSettingsFileConfig,
 	saveGoalSettingsFileConfig,
 	effectiveSettingsReport,
 	formatGoalKeybinding,
@@ -62,11 +66,15 @@ test("parseGoalSettings: string true/false values accepted", () => {
 	});
 });
 
-test("parseGoalSettings: autoSelectSingleGoal accepted as bool or string", () => {
+test("parseGoalSettings: layered booleans preserve true and false", () => {
 	assert.deepEqual(parseGoalSettings({ autoSelectSingleGoal: true }), { autoSelectSingleGoal: true });
 	assert.deepEqual(parseGoalSettings({ autoSelectSingleGoal: "true" }), { autoSelectSingleGoal: true });
-	assert.deepEqual(parseGoalSettings({ autoSelectSingleGoal: false }), {});
-	assert.deepEqual(parseGoalSettings({ autoSelectSingleGoal: "false" }), {});
+	assert.deepEqual(parseGoalSettings({ autoSelectSingleGoal: false }), { autoSelectSingleGoal: false });
+	assert.deepEqual(parseGoalSettings({ autoSelectSingleGoal: "false" }), { autoSelectSingleGoal: false });
+	assert.deepEqual(parseGoalSettings({ disabled: false, auditorProjectResources: false }), {
+		disabled: false,
+		auditorProjectResources: false,
+	});
 });
 
 test("parseGoalSettings: unknown keys rejected", () => {
@@ -313,7 +321,120 @@ test("effectiveSettingsReport: objectiveMaxChars row shows the effective value a
 		const lines = effectiveSettingsReport(dir, {});
 		const row = lines.find((l) => l.startsWith("  max objective length"));
 		assert.ok(row, "report includes the max objective length row");
-		assert.match(row!, /3000 \(file\)/);
+		assert.match(row!, /3000 \(project\)/);
+	});
+});
+
+// ── global settings file (layering) ────────────────────────────────────
+
+test("goalGlobalSettingsPath: resolves under the agent dir and honors the env override", () => {
+	const def = goalGlobalSettingsPath({});
+	assert.ok(def.endsWith(path.join(".pi", "agent", "pi-goal-x-settings.json")));
+
+	const abs = goalGlobalSettingsPath({ PI_GOAL_GLOBAL_SETTINGS_FILE: "/etc/pi/global.json" });
+	assert.equal(abs, "/etc/pi/global.json");
+
+	const rel = goalGlobalSettingsPath({ PI_GOAL_GLOBAL_SETTINGS_FILE: ".pi-global.json" });
+	assert.equal(rel, path.join(os.homedir(), ".pi-global.json"));
+});
+
+test("loadGoalGlobalSettingsFileConfig: reads the global file", () => {
+	withTempDir((dir) => {
+		const globalPath = path.join(dir, "global.json");
+		fs.writeFileSync(globalPath, JSON.stringify({ thinkingLevel: "medium", objectiveMaxChars: 1000 }), "utf8");
+		const result = loadGoalGlobalSettingsFileConfig({ PI_GOAL_GLOBAL_SETTINGS_FILE: globalPath });
+		assert.equal(result.thinkingLevel, "medium");
+		assert.equal(result.objectiveMaxChars, 1000);
+	});
+});
+
+test("loadGoalSettings: global config applies when no project config exists", () => {
+	withTempDir((dir) => {
+		const globalPath = path.join(dir, "global.json");
+		fs.writeFileSync(globalPath, JSON.stringify({ disableTasks: true, subtaskDepth: 4 }), "utf8");
+		const result = loadGoalSettings("/tmp/does-not-exist", { PI_GOAL_GLOBAL_SETTINGS_FILE: globalPath });
+		assert.equal(result.disableTasks, true);
+		assert.equal(result.subtaskDepth, 4);
+	});
+});
+
+test("loadGoalSettings: project config overrides global config, including false and zero", () => {
+	withTempDir((dir) => {
+		const globalPath = path.join(dir, "global.json");
+		fs.writeFileSync(globalPath, JSON.stringify({
+			disableTasks: true,
+			disabled: true,
+			autoSelectSingleGoal: true,
+			auditorProjectResources: true,
+			stallTimeoutMinutes: 10,
+			subtaskDepth: 2,
+			provider: "openai",
+		}), "utf8");
+
+		const projectConfigPath = goalSettingsPath(dir);
+		fs.mkdirSync(path.dirname(projectConfigPath), { recursive: true });
+		fs.writeFileSync(projectConfigPath, JSON.stringify({
+			disableTasks: false,
+			disabled: false,
+			autoSelectSingleGoal: false,
+			auditorProjectResources: false,
+			stallTimeoutMinutes: 0,
+			subtaskDepth: 5,
+		}), "utf8");
+
+		const result = loadGoalSettings(dir, { PI_GOAL_GLOBAL_SETTINGS_FILE: globalPath });
+		assert.equal(result.disableTasks, false, "project false overrides global true");
+		assert.equal(result.disabled, false, "project false overrides global true");
+		assert.equal(result.autoSelectSingleGoal, false, "project false overrides global true");
+		assert.equal(result.auditorProjectResources, false, "project false overrides global true");
+		assert.equal(result.stallTimeoutMinutes, 0, "project zero overrides global positive value");
+		assert.equal(result.subtaskDepth, 5, "project value overrides global");
+		assert.equal(result.provider, "openai", "global value used when project omits the key");
+	});
+});
+
+test("loadGoalSettings: env vars override both global and project files", () => {
+	withTempDir((dir) => {
+		const globalPath = path.join(dir, "global.json");
+		fs.writeFileSync(globalPath, JSON.stringify({ disableTasks: true }), "utf8");
+		const projectConfigPath = goalSettingsPath(dir);
+		fs.mkdirSync(path.dirname(projectConfigPath), { recursive: true });
+		fs.writeFileSync(projectConfigPath, JSON.stringify({ disableTasks: true }), "utf8");
+		const result = loadGoalSettings(dir, { PI_GOAL_GLOBAL_SETTINGS_FILE: globalPath, PI_GOAL_DISABLE_TASKS: "false" });
+		assert.equal(result.disableTasks, false, "env overrides project and global");
+	});
+});
+
+test("loadGoalSettingsFileConfigMerged: shallow merge with project winning", () => {
+	withTempDir((dir) => {
+		const globalPath = path.join(dir, "global.json");
+		fs.writeFileSync(globalPath, JSON.stringify({ disableTasks: true, provider: "openai" }), "utf8");
+		const projectConfigPath = goalSettingsPath(dir);
+		fs.mkdirSync(path.dirname(projectConfigPath), { recursive: true });
+		fs.writeFileSync(projectConfigPath, JSON.stringify({ disableTasks: false }), "utf8");
+		const merged = loadGoalSettingsFileConfigMerged(dir, { PI_GOAL_GLOBAL_SETTINGS_FILE: globalPath });
+		assert.equal(merged.disableTasks, false);
+		assert.equal(merged.provider, "openai");
+	});
+});
+
+test("saveGoalGlobalSettingsFileConfig: writes and round-trips the global file", () => {
+	withTempDir((dir) => {
+		const globalPath = path.join(dir, "global.json");
+		saveGoalGlobalSettingsFileConfig({ provider: "anthropic", model: "claude" }, { PI_GOAL_GLOBAL_SETTINGS_FILE: globalPath });
+		assert.deepEqual(loadGoalGlobalSettingsFileConfig({ PI_GOAL_GLOBAL_SETTINGS_FILE: globalPath }), { provider: "anthropic", model: "claude" });
+		assert.ok(fs.existsSync(globalPath), "global file written");
+	});
+});
+
+test("effectiveSettingsReport: shows global provenance and both file paths", () => {
+	withTempDir((dir) => {
+		const globalPath = path.join(dir, "global.json");
+		fs.writeFileSync(globalPath, JSON.stringify({ objectiveMaxChars: 1000 }), "utf8");
+		const lines = effectiveSettingsReport("/tmp/does-not-exist", { PI_GOAL_GLOBAL_SETTINGS_FILE: globalPath });
+		const row = lines.find((l) => l.startsWith("  max objective length"));
+		assert.match(row!, /1000 \(global\)/);
+		assert.ok(lines.some((l) => l.includes("settings file (global):") && l.includes(globalPath)));
 	});
 });
 

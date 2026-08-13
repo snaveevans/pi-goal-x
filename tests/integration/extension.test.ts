@@ -395,6 +395,36 @@ describe("five-tool handler integration", () => {
 		}
 	});
 
+	it("goal-settings menu can switch scope and persist global settings", async () => {
+		const f = fixture();
+		const globalPath = path.join(f.cwd, "global-pi-goal-x-settings.json");
+		const previousGlobalPath = process.env.PI_GOAL_GLOBAL_SETTINGS_FILE;
+		process.env.PI_GOAL_GLOBAL_SETTINGS_FILE = globalPath;
+		try {
+			let call = 0;
+			const h = createHarness({
+				cwd: f.cwd,
+				sessionEntries: f.sessionEntries,
+				hasUI: true,
+				select: async (_prompt: string, options: string[]) => {
+					call++;
+					if (call === 1) return options.find((option) => option.startsWith("Scope: project"));
+					if (call === 2) return "  disableTasks: false";
+					return "Done";
+				},
+			});
+			await start(h);
+			await h.commands.get("goal-settings").handler("", h.ctx);
+			const saved = JSON.parse(readFileSync(globalPath, "utf8"));
+			assert.equal(saved.disableTasks, true, "global scope edit persists globally");
+			assert.ok(!existsSync(path.join(f.cwd, ".pi", "pi-goal-x-settings.json")), "project settings file is untouched");
+		} finally {
+			if (previousGlobalPath === undefined) delete process.env.PI_GOAL_GLOBAL_SETTINGS_FILE;
+			else process.env.PI_GOAL_GLOBAL_SETTINGS_FILE = previousGlobalPath;
+			f.cleanup();
+		}
+	});
+
 	it("goal-settings menu editing persists a field without stack overflow", async () => {
 		const f = fixture();
 		try {
@@ -480,8 +510,8 @@ describe("five-tool handler integration", () => {
 				assert.equal(saved.disableContracts, true);
 				assert.equal(saved.disabled, true);
 				assert.equal(saved.autoSelectSingleGoal, true);
-				// Second pass toggles disableTasks off and autoSelectSingleGoal off; the
-				// file must then omit both keys (false is the default and not persisted).
+				// Second pass toggles disableTasks and autoSelectSingleGoal off. Layered
+				// settings persist false explicitly so project can override global true.
 				const selects2 = ["  disableTasks: true", "  autoSelectSingleGoal: true", "Done"];
 				const h2 = createHarness({
 					cwd: f.cwd, sessionEntries: f.sessionEntries, hasUI: true,
@@ -490,8 +520,8 @@ describe("five-tool handler integration", () => {
 				await start(h2);
 				await h2.commands.get("goal-settings").handler("", h2.ctx);
 				const saved2 = readSettings(f.cwd);
-				assert.equal(saved2.disableTasks, undefined, "disableTasks toggled back off clears the key");
-				assert.equal(saved2.autoSelectSingleGoal, undefined, "autoSelectSingleGoal toggled back off clears the key");
+				assert.equal(saved2.disableTasks, false, "disableTasks false is persisted for layering");
+				assert.equal(saved2.autoSelectSingleGoal, false, "autoSelectSingleGoal false is persisted for layering");
 				assert.equal(saved2.disableContracts, true, "untouched boolean preserved");
 				assert.equal(saved2.disabled, true, "untouched boolean preserved");
 			} finally {

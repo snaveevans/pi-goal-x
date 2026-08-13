@@ -111,7 +111,7 @@ test("parseGoalSettings supports provider/model and thinking_level aliases", () 
 test("parseGoalSettings reads disabled flag", () => {
 	assert.deepEqual(parseGoalSettings({ disabled: true }), { disabled: true });
 	assert.deepEqual(parseGoalSettings({ disabled: "true" }), { disabled: true });
-	assert.deepEqual(parseGoalSettings({ disabled: false }), {});
+	assert.deepEqual(parseGoalSettings({ disabled: false }), { disabled: false });
 	assert.deepEqual(parseGoalSettings({}), {});
 });
 
@@ -143,14 +143,16 @@ test("saveGoalSettingsFileConfig persists UI-editable settings (auditor + task f
 		assert.match(fs.readFileSync(goalSettingsPath(cwd), "utf8"), /"disabled": true/);
 		assert.deepEqual(loadGoalSettingsFileConfig(cwd), saved2);
 
-		// autoSelectSingleGoal: persisted only when true (default is false)
+		// Layered booleans persist both true and false so project config can
+		// explicitly override a global value.
 		const saved3 = saveGoalSettingsFileConfig(cwd, { autoSelectSingleGoal: true });
 		assert.deepEqual(saved3, { autoSelectSingleGoal: true });
 		assert.match(fs.readFileSync(goalSettingsPath(cwd), "utf8"), /"autoSelectSingleGoal": true/);
 		assert.deepEqual(loadGoalSettingsFileConfig(cwd), saved3);
 		const saved4 = saveGoalSettingsFileConfig(cwd, { autoSelectSingleGoal: false });
-		assert.equal(saved4.autoSelectSingleGoal, undefined);
-		assert.doesNotMatch(fs.readFileSync(goalSettingsPath(cwd), "utf8"), /autoSelectSingleGoal/);
+		assert.equal(saved4.autoSelectSingleGoal, false);
+		assert.match(fs.readFileSync(goalSettingsPath(cwd), "utf8"), /"autoSelectSingleGoal": false/);
+		assert.deepEqual(loadGoalSettingsFileConfig(cwd), saved4);
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });
 	}

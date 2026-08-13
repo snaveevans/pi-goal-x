@@ -1,13 +1,19 @@
 /**
  * Unified global goal settings.
  *
- * Reads `.pi/pi-goal-x-settings.json` with env var overrides:
+ * Two layered files, following pi's own global-vs-project convention
+ * (`~/.pi/agent/settings.json` overridden by `.pi/settings.json`):
+ *   global  — `~/.pi/agent/pi-goal-x-settings.json` (all projects)
+ *   project — `.pi/pi-goal-x-settings.json` (current directory)
+ *
+ * Project overrides global; env vars override both:
  *   PI_GOAL_DISABLE_TASKS     — "true" to disable, any other value = use file config
  *   PI_GOAL_DISABLE_CONTRACTS — "true" to disable, any other value = use file config
  *   PI_GOAL_OBJECTIVE_MAX_CHARS — objective length cap (0 = no limit), overrides file
- *   PI_GOAL_SETTINGS_FILE     — alternative settings file path (relative to cwd or absolute)
+ *   PI_GOAL_SETTINGS_FILE     — alternative project settings file path (relative to cwd or absolute)
+ *   PI_GOAL_GLOBAL_SETTINGS_FILE — alternative global settings file path (relative to home or absolute)
  *
- * The file may contain:
+ * Each file may contain:
  *   disableTasks, disableContracts, subtaskDepth,
  *   provider, model, thinkingLevel, disabled, objectiveMaxChars, keybindings
  *
@@ -17,7 +23,9 @@
  */
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { KeyId } from "@earendil-works/pi-tui";
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -83,6 +91,7 @@ export interface GoalSettings {
 }
 
 export const PI_GOAL_SETTINGS_FILE_ENV = "PI_GOAL_SETTINGS_FILE";
+export const PI_GOAL_GLOBAL_SETTINGS_FILE_ENV = "PI_GOAL_GLOBAL_SETTINGS_FILE";
 
 /**
  * mtime+size-keyed cache for the settings file (P1-1): loadGoalSettings is on
@@ -143,6 +152,20 @@ export function goalSettingsPath(cwd: string, env: NodeJS.ProcessEnv = process.e
 		return path.isAbsolute(override) ? override : path.join(cwd, override);
 	}
 	return path.join(cwd, ".pi", "pi-goal-x-settings.json");
+}
+
+/**
+ * Resolve the path to the global settings file (all projects).
+ * Uses `PI_GOAL_GLOBAL_SETTINGS_FILE` env var if set (relative to home or
+ * absolute). Otherwise defaults to `~/.pi/agent/pi-goal-x-settings.json`
+ * (honoring pi's own `PI_CODING_AGENT_DIR` override via `getAgentDir`).
+ */
+export function goalGlobalSettingsPath(env: NodeJS.ProcessEnv = process.env): string {
+	const override = asNonEmptyString(env[PI_GOAL_GLOBAL_SETTINGS_FILE_ENV]);
+	if (override) {
+		return path.isAbsolute(override) ? override : path.join(os.homedir(), override);
+	}
+	return path.join(getAgentDir(), "pi-goal-x-settings.json");
 }
 
 function asNonEmptyString(value: unknown): string | undefined {
@@ -228,10 +251,13 @@ export function parseGoalSettings(raw: unknown): GoalSettings {
 	if (provider !== undefined) settings.provider = provider;
 	if (model !== undefined) settings.model = model;
 	if (thinkingLevel !== undefined) settings.thinkingLevel = thinkingLevel;
-	if (record.disabled === true || record.disabled === "true") settings.disabled = true;
-	if (record.autoSelectSingleGoal === true || record.autoSelectSingleGoal === "true") settings.autoSelectSingleGoal = true;
-	if (record.auditorProjectResources === true || record.auditorProjectResources === "true") settings.auditorProjectResources = true;
-	const stallTimeoutMinutes = asPositiveInt(record.stallTimeoutMinutes);
+	const disabled = asBool(record.disabled);
+	const autoSelectSingleGoal = asBool(record.autoSelectSingleGoal);
+	const auditorProjectResources = asBool(record.auditorProjectResources);
+	if (disabled !== undefined) settings.disabled = disabled;
+	if (autoSelectSingleGoal !== undefined) settings.autoSelectSingleGoal = autoSelectSingleGoal;
+	if (auditorProjectResources !== undefined) settings.auditorProjectResources = auditorProjectResources;
+	const stallTimeoutMinutes = asNonNegativeInt(record.stallTimeoutMinutes);
 	if (stallTimeoutMinutes !== undefined) settings.stallTimeoutMinutes = stallTimeoutMinutes;
 	const objectiveMaxChars = asNonNegativeInt(record.objectiveMaxChars);
 	if (objectiveMaxChars !== undefined) settings.objectiveMaxChars = objectiveMaxChars;
@@ -241,12 +267,11 @@ export function parseGoalSettings(raw: unknown): GoalSettings {
 }
 
 /**
- * Load settings from the file on disk. Returns {} if file missing or invalid.
+ * Load + parse one settings file. Returns {} if the file is missing or invalid.
  * Zero-op session cache: the resolved path is read once per process/session
  * (and after every extension save); steady-state loads do no fs ops.
  */
-export function loadGoalSettingsFileConfig(cwd: string, env?: NodeJS.ProcessEnv): GoalSettings {
-	const configPath = goalSettingsPath(cwd, env);
+function loadGoalSettingsFromPath(configPath: string): GoalSettings {
 	const cached = settingsFileCache.get(configPath);
 	if (cached) return cached.missing ? {} : (cached.config ?? {});
 	let config: GoalSettings;
@@ -261,13 +286,31 @@ export function loadGoalSettingsFileConfig(cwd: string, env?: NodeJS.ProcessEnv)
 	return config;
 }
 
+/** Load the project-level settings file (`.pi/pi-goal-x-settings.json`). */
+export function loadGoalSettingsFileConfig(cwd: string, env?: NodeJS.ProcessEnv): GoalSettings {
+	return loadGoalSettingsFromPath(goalSettingsPath(cwd, env));
+}
+
+/** Load the global settings file (`~/.pi/agent/pi-goal-x-settings.json`). */
+export function loadGoalGlobalSettingsFileConfig(env?: NodeJS.ProcessEnv): GoalSettings {
+	return loadGoalSettingsFromPath(goalGlobalSettingsPath(env));
+}
+
+/**
+ * Merge global + project file config. Project keys win (keybindings included —
+ * a project `keybindings` block replaces the global one wholesale).
+ */
+export function loadGoalSettingsFileConfigMerged(cwd: string, env: NodeJS.ProcessEnv = process.env): GoalSettings {
+	return { ...loadGoalGlobalSettingsFileConfig(env), ...loadGoalSettingsFileConfig(cwd, env) };
+}
+
 /**
  * Load settings with env var overrides.
  * Env vars take precedence over file config.
  * Default: all flags false/undefined (features enabled, default model).
  */
 export function loadGoalSettings(cwd: string, env: NodeJS.ProcessEnv = process.env): GoalSettings {
-	const fileConfig = loadGoalSettingsFileConfig(cwd, env);
+	const fileConfig = loadGoalSettingsFileConfigMerged(cwd, env);
 	return {
 		disableTasks: asBool(env.PI_GOAL_DISABLE_TASKS) ?? fileConfig.disableTasks ?? false,
 		disableContracts: asBool(env.PI_GOAL_DISABLE_CONTRACTS) ?? fileConfig.disableContracts ?? false,
@@ -285,8 +328,8 @@ export function loadGoalSettings(cwd: string, env: NodeJS.ProcessEnv = process.e
 }
 
 /**
- * Save settings to the unified settings file on disk.
- * Persists only non-default values using the canonical key names.
+ * Save settings to one settings file using canonical key names.
+ * Explicit false/zero values are preserved because they can override a lower layer.
  */
 /**
  * Determine whether the auditor should be enabled by default based on settings.
@@ -309,7 +352,8 @@ export function envOverrideFor(key: keyof GoalSettings | "settingsFile", env: No
  * surfaced by /goal-status.
  */
 export function effectiveSettingsReport(cwd: string, env: NodeJS.ProcessEnv = process.env): string[] {
-	const fileConfig = loadGoalSettingsFileConfig(cwd, env);
+	const globalConfig = loadGoalGlobalSettingsFileConfig(env);
+	const projectConfig = loadGoalSettingsFileConfig(cwd, env);
 	const effective = loadGoalSettings(cwd, env);
 	const lines = ["Settings (provenance):"];
 	const rows: Array<{ key: keyof GoalSettings; label: string; format: (v: GoalSettings) => string }> = [
@@ -329,12 +373,14 @@ export function effectiveSettingsReport(cwd: string, env: NodeJS.ProcessEnv = pr
 	for (const row of rows) {
 		const envVar = envOverrideFor(row.key, env);
 		const value = row.format(effective);
-		const source = envVar ? `env (${envVar})` : row.key in fileConfig ? "file" : "default";
+		const source = envVar ? `env (${envVar})` : row.key in projectConfig ? "project" : row.key in globalConfig ? "global" : "default";
 		lines.push(`  ${row.label}: ${value} (${source})`);
 	}
-	lines.push(`  settings file: ${goalSettingsPath(cwd, env)}`);
+	lines.push(`  settings file (project): ${goalSettingsPath(cwd, env)}`);
+	lines.push(`  settings file (global): ${goalGlobalSettingsPath(env)}`);
 	const fileOverride = envOverrideFor("settingsFile", env);
-	if (fileOverride) lines.push(`  (settings file overridden by ${fileOverride})`);
+	if (fileOverride) lines.push(`  (project settings file overridden by ${fileOverride})`);
+	if (asNonEmptyString(env[PI_GOAL_GLOBAL_SETTINGS_FILE_ENV])) lines.push(`  (global settings file overridden by ${PI_GOAL_GLOBAL_SETTINGS_FILE_ENV})`);
 	return lines;
 }
 
@@ -342,7 +388,7 @@ export function isAuditorEnabledByDefault(settings: GoalSettings): boolean {
 	return settings.disabled !== true;
 }
 
-export function saveGoalSettingsFileConfig(cwd: string, settings: GoalSettings): GoalSettings {
+function saveGoalSettingsAt(configPath: string, settings: GoalSettings): GoalSettings {
 	const clean: GoalSettings = {};
 	const provider = asNonEmptyString(settings.provider);
 	const model = asNonEmptyString(settings.model);
@@ -353,31 +399,43 @@ export function saveGoalSettingsFileConfig(cwd: string, settings: GoalSettings):
 	if (provider) clean.provider = provider;
 	if (model) clean.model = model;
 	if (thinkingLevel) clean.thinkingLevel = thinkingLevel;
-	if (settings.disabled === true) clean.disabled = true;
-	if (disableTasks === true) clean.disableTasks = true;
-	if (disableContracts === true) clean.disableContracts = true;
+	const disabled = asBool(settings.disabled);
+	const autoSelectSingleGoal = asBool(settings.autoSelectSingleGoal);
+	const auditorProjectResources = asBool(settings.auditorProjectResources);
+	if (disabled !== undefined) clean.disabled = disabled;
+	if (disableTasks !== undefined) clean.disableTasks = disableTasks;
+	if (disableContracts !== undefined) clean.disableContracts = disableContracts;
 	if (subtaskDepth !== undefined) clean.subtaskDepth = subtaskDepth;
-	if (settings.autoSelectSingleGoal === true) clean.autoSelectSingleGoal = true;
-	if (settings.auditorProjectResources === true) clean.auditorProjectResources = true;
+	if (autoSelectSingleGoal !== undefined) clean.autoSelectSingleGoal = autoSelectSingleGoal;
+	if (auditorProjectResources !== undefined) clean.auditorProjectResources = auditorProjectResources;
 	if (settings.stallTimeoutMinutes !== undefined) clean.stallTimeoutMinutes = settings.stallTimeoutMinutes;
 	if (settings.objectiveMaxChars !== undefined) clean.objectiveMaxChars = settings.objectiveMaxChars;
 	if (settings.keybindings) clean.keybindings = parseKeybindings(settings.keybindings);
-	const configPath = goalSettingsPath(cwd);
 	fs.mkdirSync(path.dirname(configPath), { recursive: true });
 	settingsFileCache.delete(configPath);
 	const persisted: Record<string, unknown> = {};
 	if (clean.provider) persisted.provider = clean.provider;
 	if (clean.model) persisted.model = clean.model;
 	if (clean.thinkingLevel) persisted.thinking_level = clean.thinkingLevel;
-	if (clean.disabled) persisted.disabled = true;
-	if (clean.disableTasks) persisted.disableTasks = true;
-	if (clean.disableContracts) persisted.disableContracts = true;
+	if (clean.disabled !== undefined) persisted.disabled = clean.disabled;
+	if (clean.disableTasks !== undefined) persisted.disableTasks = clean.disableTasks;
+	if (clean.disableContracts !== undefined) persisted.disableContracts = clean.disableContracts;
 	if (clean.subtaskDepth !== undefined) persisted.subtaskDepth = clean.subtaskDepth;
-	if (settings.autoSelectSingleGoal === true) persisted.autoSelectSingleGoal = true;
-	if (settings.auditorProjectResources === true) persisted.auditorProjectResources = true;
+	if (clean.autoSelectSingleGoal !== undefined) persisted.autoSelectSingleGoal = clean.autoSelectSingleGoal;
+	if (clean.auditorProjectResources !== undefined) persisted.auditorProjectResources = clean.auditorProjectResources;
 	if (clean.stallTimeoutMinutes !== undefined) persisted.stallTimeoutMinutes = clean.stallTimeoutMinutes;
 	if (clean.objectiveMaxChars !== undefined) persisted.objectiveMaxChars = clean.objectiveMaxChars;
 	if (clean.keybindings) persisted.keybindings = clean.keybindings;
 	fs.writeFileSync(configPath, `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
 	return clean;
+}
+
+/** Save the project-level settings file (`.pi/pi-goal-x-settings.json`). */
+export function saveGoalSettingsFileConfig(cwd: string, settings: GoalSettings): GoalSettings {
+	return saveGoalSettingsAt(goalSettingsPath(cwd), settings);
+}
+
+/** Save the global settings file (`~/.pi/agent/pi-goal-x-settings.json`). */
+export function saveGoalGlobalSettingsFileConfig(settings: GoalSettings, env: NodeJS.ProcessEnv = process.env): GoalSettings {
+	return saveGoalSettingsAt(goalGlobalSettingsPath(env), settings);
 }
