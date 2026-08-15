@@ -1,6 +1,6 @@
 import { type AgentToolResult, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { FOCUS_ENTRY, STATE_ENTRY, GOAL_EVENT_ENTRY, goalDetails } from "./goal-format.ts";
-import { loadGoalSettings, loadGoalSettingsFileConfig } from "./goal-settings.ts";
+import { loadGoalSettings } from "./goal-settings.ts";
 import {
 	ALL_REGISTERED_GOAL_TOOLS,
 	CORE_GOAL_TOOLS,
@@ -36,7 +36,6 @@ import { GoalRuntime } from "./goal-runtime.ts";
 import {
 	focusedGoalFromPool,
 	openGoalsFromPool,
-	otherOpenGoalCount,
 	resolveSessionFocus,
 } from "./goal-pool.ts";
 import { buildGoalRunningNotification } from "./widgets/goal-notifications.ts";
@@ -199,7 +198,7 @@ export function createGoalCore(
 		focusToken: (goalId) => focusedOperationToken(goalId),
 		isTokenCurrent: (token) => isFocusedOperationCurrent(token),
 		appendFocusEntry: (goalId, reason) => appendFocusEntry(goalId, reason),
-		onFocusedGoalLost: (lostGoalId, ctx) => {
+		onFocusedGoalLost: (_lostGoalId, ctx) => {
 			clearStoppedRuntimeState();
 			updateUI(ctx as unknown as ExtensionContext);
 		},
@@ -341,7 +340,7 @@ export function createGoalCore(
 		}
 	}
 
-	function abortAudit(ctx: ExtensionContext): void {
+	function abortAudit(_ctx: ExtensionContext): void {
 		if (!auditAbortController || !auditProgress) return;
 		auditAbortController.abort();
 		auditAbortController = null;
@@ -645,6 +644,15 @@ export function createGoalCore(
 			return;
 		}
 		if (!state.goal) {
+			// Optional quiet mode: with hideUnfocusedBanner the unfocused
+			// widget + status hint are suppressed entirely while open goals
+			// exist, so a session that never focuses stays silent. The
+			// banner returns as soon as the setting is turned off again or
+			// a goal is focused (both re-enter renderUI via updateUI).
+			if (loadGoalSettings(ctx.cwd).hideUnfocusedBanner === true) {
+				clearGoalWidget(ctx);
+				return;
+			}
 			ctx.ui.setStatus("goal", `goal: unfocused [${totalOpen} open] - /goal-focus`);
 			if (!widgetRegistered) {
 				ctx.ui.setWidget(
@@ -729,7 +737,9 @@ export function createGoalCore(
 		if (!focusEntry && focusedGoalId) {
 			try {
 				appendFocusEntry(focusedGoalId, legacyGoal?.id === focusedGoalId ? "migrated" : "selected");
-			} catch {}
+			} catch {
+				// Best-effort: focus still restores from the session entry on the next load.
+			}
 		}
 		for (const [id, current] of goalsById) {
 			if (current.status === "complete") {
@@ -804,7 +814,6 @@ export function createGoalCore(
 
 	function pauseActiveGoal(ctx: ExtensionContext): void {
 		if (!state.goal || state.goal.status !== "active") return;
-		const pausedGoalId = state.goal.id;
 		// User-initiated pause (Esc / aborted turn). Clear any stale agent pause reason.
 		state.goal = { ...state.goal, autoContinue: false, pauseReason: undefined, pauseSuggestedAction: undefined };
 		stopActiveGoal("paused", "user", ctx);

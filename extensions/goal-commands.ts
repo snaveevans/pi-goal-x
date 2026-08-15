@@ -353,7 +353,7 @@ export function registerGoalCommands(core: GoalCore): void {
 	 * Rendering and dispatch both derive from SETTING_ROWS so the displayed
 	 * fields and the selectable fields can never drift apart. Rows are grouped
 	 * into sections (Goal behavior / Task tracking / Completion auditor). All
-	 * eight persisted fields are present and operable.
+	 * persisted fields are present and operable.
 	 */
 	type SettingRow = {
 		key: keyof GoalSettings;
@@ -364,6 +364,7 @@ export function registerGoalCommands(core: GoalCore): void {
 
 	const SETTING_ROWS: readonly SettingRow[] = [
 		{ key: "autoSelectSingleGoal", label: "autoSelectSingleGoal", section: "Goal behavior", kind: "boolean" },
+		{ key: "hideUnfocusedBanner", label: "hideUnfocusedBanner", section: "Goal behavior", kind: "boolean" },
 		{ key: "disableContracts", label: "disableContracts", section: "Goal behavior", kind: "boolean" },
 		{ key: "stallTimeoutMinutes", label: "stall timeout (minutes)", section: "Goal behavior", kind: "positiveInteger" },
 		{ key: "objectiveMaxChars", label: "max objective length (0 = none)", section: "Goal behavior", kind: "positiveInteger" },
@@ -376,7 +377,7 @@ export function registerGoalCommands(core: GoalCore): void {
 	];
 
 	function settingsValue(config: GoalSettings, key: keyof GoalSettings): string {
-		if (key === "disabled" || key === "disableTasks" || key === "disableContracts" || key === "autoSelectSingleGoal" || key === "auditorProjectResources") {
+		if (key === "disabled" || key === "disableTasks" || key === "disableContracts" || key === "autoSelectSingleGoal" || key === "auditorProjectResources" || key === "hideUnfocusedBanner") {
 			return config[key] === true ? "true" : "false";
 		}
 		if (key === "subtaskDepth") return config.subtaskDepth !== undefined ? String(config.subtaskDepth) : "1";

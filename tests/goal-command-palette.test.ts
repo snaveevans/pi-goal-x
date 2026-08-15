@@ -188,6 +188,7 @@ test("goal-settings renders sectioned rows with clearer auditor wording", async 
 		assert.ok(opts.includes("─── Completion auditor ───"), "Completion auditor section header");
 		assert.ok(opts.some((l) => l.includes("auditor disabled:")), "clearer auditor wording row");
 		assert.ok(opts.some((l) => l.includes("provider:")) && opts.some((l) => l.includes("model:")), "provider/model rows");
+		assert.ok(opts.some((l) => l.includes("hideUnfocusedBanner:")), "hideUnfocusedBanner row");
 		assert.equal(opts.filter((l) => l.startsWith("───")).length, 3, "exactly three sections");
 		assert.ok(opts.includes("Done"));
 	} finally {
@@ -304,6 +305,35 @@ test("goal-settings: max objective length row defaults to 0 and accepts a config
 		await h.commands.get("goal-settings")!.handler("", h.ctx);
 		saved = JSON.parse(readFileSync(path.join(cwd, ".pi", "pi-goal-x-settings.json"), "utf8"));
 		assert.equal(saved.objectiveMaxChars, 6000, "configured limit persists");
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("goal-settings: hideUnfocusedBanner toggles from the menu and persists", async () => {
+	const cwd = mkdtempSync(path.join(tmpdir(), "goal-settings-banner-"));
+	mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+	const h = createHarness(cwd);
+	try {
+		(h.ctx as { hasUI: boolean }).hasUI = true;
+		const ui = h.ctx.ui as unknown as {
+			select: (title: string, options: string[]) => Promise<string | undefined>;
+		};
+		let selectCalls = 0;
+		ui.select = async (_title: string, options: string[]) => {
+			selectCalls++;
+			if (selectCalls === 1) {
+				const row = options.find((o) => o.includes("hideUnfocusedBanner"));
+				assert.ok(row, "hideUnfocusedBanner row must be listed");
+				return row;
+			}
+			return "Done";
+		};
+
+		await h.commands.get("goal-settings")!.handler("", h.ctx);
+
+		const saved = JSON.parse(readFileSync(path.join(cwd, ".pi", "pi-goal-x-settings.json"), "utf8"));
+		assert.equal(saved.hideUnfocusedBanner, true, "menu toggle persists hideUnfocusedBanner=true");
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}

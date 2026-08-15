@@ -69,6 +69,13 @@ test("parseGoalSettings: autoSelectSingleGoal accepted as bool or string", () =>
 	assert.deepEqual(parseGoalSettings({ autoSelectSingleGoal: "false" }), {});
 });
 
+test("parseGoalSettings: hideUnfocusedBanner accepted as bool or string", () => {
+	assert.deepEqual(parseGoalSettings({ hideUnfocusedBanner: true }), { hideUnfocusedBanner: true });
+	assert.deepEqual(parseGoalSettings({ hideUnfocusedBanner: "true" }), { hideUnfocusedBanner: true });
+	assert.deepEqual(parseGoalSettings({ hideUnfocusedBanner: false }), {});
+	assert.deepEqual(parseGoalSettings({ hideUnfocusedBanner: "false" }), {});
+});
+
 test("parseGoalSettings: unknown keys rejected", () => {
 	assert.throws(
 		() => parseGoalSettings({ disableTasks: true, disableContracts: false, foo: "bar" }),
@@ -225,6 +232,24 @@ test("loadGoalSettings: env var absent falls back to file", () => {
 		assert.equal(result.disableTasks, true);
 		assert.equal(result.disableContracts, true);
 	});
+
+
+test("loadGoalSettings: hideUnfocusedBanner read from file", () => {
+	withTempDir((dir) => {
+		const configPath = goalSettingsPath(dir);
+		fs.mkdirSync(path.dirname(configPath), { recursive: true });
+		fs.writeFileSync(configPath, JSON.stringify({ hideUnfocusedBanner: true }), "utf8");
+		const result = loadGoalSettings(dir, {});
+		assert.equal(result.hideUnfocusedBanner, true, "file value surfaced by loadGoalSettings");
+	});
+});
+
+test("loadGoalSettings: hideUnfocusedBanner defaults to false", () => {
+	withTempDir((dir) => {
+		const result = loadGoalSettings(dir, {});
+		assert.equal(result.hideUnfocusedBanner, false, "hideUnfocusedBanner defaults to false");
+	});
+});
 });
 
 test("loadGoalSettings: env var non-true values treated as absent", () => {

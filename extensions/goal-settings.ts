@@ -9,7 +9,8 @@
  *
  * The file may contain:
  *   disableTasks, disableContracts, subtaskDepth,
- *   provider, model, thinkingLevel, disabled, objectiveMaxChars, keybindings
+ *   provider, model, thinkingLevel, disabled, objectiveMaxChars, keybindings,
+ *   hideUnfocusedBanner
  *
  * `keybindings.dashboard` accepts `toggleExpand`, `scrollUp`, and `scrollDown`.
  *
@@ -68,6 +69,13 @@ export interface GoalSettings {
 	thinkingLevel?: ThinkingLevel;
 	disabled?: boolean;
 	autoSelectSingleGoal?: boolean;
+	/**
+	 * When true, sessions that are not focused on any goal show no
+	 * "Goal focus required" banner/status hint while open goals exist.
+	 * The banner returns when the setting is disabled again or a goal
+	 * is focused. Default: false (banner shown).
+	 */
+	hideUnfocusedBanner?: boolean;
 	/** E3: load the project's own skills/extensions into auditor sessions (off by default = isolation). */
 	auditorProjectResources?: boolean;
 	/** F5: stall detector timeout in minutes (0 = off). */
@@ -123,6 +131,7 @@ const ALLOWED_SETTINGS_KEYS = new Set([
 	"thinking_level",
 	"disabled",
 	"autoSelectSingleGoal",
+	"hideUnfocusedBanner",
 	"auditorProjectResources",
 	"stallTimeoutMinutes",
 	"objectiveMaxChars",
@@ -230,6 +239,7 @@ export function parseGoalSettings(raw: unknown): GoalSettings {
 	if (thinkingLevel !== undefined) settings.thinkingLevel = thinkingLevel;
 	if (record.disabled === true || record.disabled === "true") settings.disabled = true;
 	if (record.autoSelectSingleGoal === true || record.autoSelectSingleGoal === "true") settings.autoSelectSingleGoal = true;
+	if (record.hideUnfocusedBanner === true || record.hideUnfocusedBanner === "true") settings.hideUnfocusedBanner = true;
 	if (record.auditorProjectResources === true || record.auditorProjectResources === "true") settings.auditorProjectResources = true;
 	const stallTimeoutMinutes = asPositiveInt(record.stallTimeoutMinutes);
 	if (stallTimeoutMinutes !== undefined) settings.stallTimeoutMinutes = stallTimeoutMinutes;
@@ -277,6 +287,7 @@ export function loadGoalSettings(cwd: string, env: NodeJS.ProcessEnv = process.e
 		thinkingLevel: fileConfig.thinkingLevel,
 		disabled: fileConfig.disabled,
 		autoSelectSingleGoal: fileConfig.autoSelectSingleGoal ?? false,
+		hideUnfocusedBanner: fileConfig.hideUnfocusedBanner ?? false,
 		auditorProjectResources: fileConfig.auditorProjectResources ?? false,
 		stallTimeoutMinutes: fileConfig.stallTimeoutMinutes,
 		objectiveMaxChars: asNonNegativeInt(env.PI_GOAL_OBJECTIVE_MAX_CHARS) ?? fileConfig.objectiveMaxChars,
@@ -314,6 +325,7 @@ export function effectiveSettingsReport(cwd: string, env: NodeJS.ProcessEnv = pr
 	const lines = ["Settings (provenance):"];
 	const rows: Array<{ key: keyof GoalSettings; label: string; format: (v: GoalSettings) => string }> = [
 		{ key: "autoSelectSingleGoal", label: "autoSelectSingleGoal", format: (v) => (v.autoSelectSingleGoal === true ? "true" : "false") },
+		{ key: "hideUnfocusedBanner", label: "hideUnfocusedBanner", format: (v) => (v.hideUnfocusedBanner === true ? "true" : "false") },
 		{ key: "disableContracts", label: "disableContracts", format: (v) => (v.disableContracts === true ? "true" : "false") },
 		{ key: "disableTasks", label: "disableTasks", format: (v) => (v.disableTasks === true ? "true" : "false") },
 		{ key: "subtaskDepth", label: "subtaskDepth", format: (v) => String(v.subtaskDepth ?? 1) },
@@ -358,6 +370,7 @@ export function saveGoalSettingsFileConfig(cwd: string, settings: GoalSettings):
 	if (disableContracts === true) clean.disableContracts = true;
 	if (subtaskDepth !== undefined) clean.subtaskDepth = subtaskDepth;
 	if (settings.autoSelectSingleGoal === true) clean.autoSelectSingleGoal = true;
+	if (settings.hideUnfocusedBanner === true) clean.hideUnfocusedBanner = true;
 	if (settings.auditorProjectResources === true) clean.auditorProjectResources = true;
 	if (settings.stallTimeoutMinutes !== undefined) clean.stallTimeoutMinutes = settings.stallTimeoutMinutes;
 	if (settings.objectiveMaxChars !== undefined) clean.objectiveMaxChars = settings.objectiveMaxChars;
@@ -374,6 +387,7 @@ export function saveGoalSettingsFileConfig(cwd: string, settings: GoalSettings):
 	if (clean.disableContracts) persisted.disableContracts = true;
 	if (clean.subtaskDepth !== undefined) persisted.subtaskDepth = clean.subtaskDepth;
 	if (settings.autoSelectSingleGoal === true) persisted.autoSelectSingleGoal = true;
+	if (clean.hideUnfocusedBanner) persisted.hideUnfocusedBanner = true;
 	if (settings.auditorProjectResources === true) persisted.auditorProjectResources = true;
 	if (clean.stallTimeoutMinutes !== undefined) persisted.stallTimeoutMinutes = clean.stallTimeoutMinutes;
 	if (clean.objectiveMaxChars !== undefined) persisted.objectiveMaxChars = clean.objectiveMaxChars;
