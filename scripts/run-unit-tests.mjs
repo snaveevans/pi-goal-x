@@ -30,6 +30,13 @@ const testFiles = suite === "integration"
 			? [...unitFiles, ...integrationFiles, ...e2eFiles]
 			: unitFiles;
 
+// Keep test arguments relative to cwd. Absolute Windows paths can be rewritten
+// by MSYS/Git Bash and then rejected by Node's ESM loader.
+const testArgs = testFiles.map((file) => {
+	const relativePath = file.slice(projectRoot.length).replace(/^[/\\\\]/, "");
+	return `./${relativePath.replaceAll("\\", "/")}`;
+});
+
 if (testFiles.length === 0) {
 	throw new Error("No " + suite + " test files were discovered.");
 }
@@ -89,7 +96,7 @@ const result = spawnSync(
 		"--experimental-strip-types",
 		"--test",
 		...isolationArgs,
-		...testFiles,
+		...testArgs,
 	],
 	{ cwd: projectRoot, stdio: "inherit" },
 );

@@ -54,6 +54,13 @@ For an ordered goal, you can provide the steps or define them with the agent:
 
 Use `/sisyphus-direct <objective>` to start an ordered goal without drafting.
 
+Sisyphus plans are intentionally ordered, but they are not immutable: if the
+user changes the plan, use `/goal-tweak` and obtain confirmation before
+replacing it. A skipped step must include a reason, and a skipped or completed
+step can be reopened with `update_goal_task` when later evidence shows it is
+needed again. Completion still requires every required step to be complete or
+explicitly justified as skipped.
+
 ## Tasks and subtasks
 
 The agent can divide a goal into tasks and subtasks, each describing part of the work required to complete it. During guided goal creation, you review the proposed plan before work begins.
@@ -121,6 +128,15 @@ Open `/goal-settings` to change these options. You can save defaults for all pro
 | Auditor disabled | Turn off independent completion review. |
 | Auditor provider, model, and thinking level | Choose which model reviews completed work and its reasoning effort. |
 
+
+## Observability
+
+For troubleshooting long-running goals, set `PI_GOAL_X_OBSERVABILITY=1` before
+starting Pi. The extension then appends privacy-conscious JSONL events for
+continuation scheduling, retries, focus changes, and auditor decisions to
+`.pi/goals/debug/observability.jsonl`. Objectives, prompts, tool arguments, and
+model output are intentionally excluded; telemetry failures never affect goal
+execution.
 
 ## License
 
