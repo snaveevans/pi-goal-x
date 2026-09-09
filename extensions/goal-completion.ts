@@ -8,6 +8,7 @@ import {
 } from "./goal-policy.ts";
 import { loadGoalSettings, loadGoalSettingsFileConfig } from "./goal-settings.ts";
 import { runGoalCompletionAuditor } from "./goal-auditor.ts";
+import { observeGoal } from "./goal-observability.ts";
 import { nowIso, type GoalRecord } from "./goal-record.ts";
 import { latestEventsForGoal, goalRuntimeEvents } from "./goal-ledger.ts";
 import { mergeGoalPromptFromDisk } from "./storage/goal-files.ts";
@@ -261,6 +262,12 @@ if (settings.disabled === true) {
 			};
 			core.goalWidgetComponentRef.current?.invalidate();
 		},
+	});
+	observeGoal(ctx, {
+		event: "auditor_decision",
+		goalId: auditTarget.id,
+		approved: auditor.approved,
+		error: auditor.error,
 	});
 	// Clear abort controller — audit finished on its own
 	if (core.auditAbortController === completionAuditController) core.auditAbortController = null;

@@ -43,6 +43,7 @@ import { buildGoalRunningNotification } from "./widgets/goal-notifications.ts";
 import { GOAL_WIDGET_KEY, GoalWidgetComponent, liveDisplayGoal, makeGoalWidgetFactory, type AuditorWidgetProgress } from "./widgets/goal-widget.ts";
 import type { AuditVerdict } from "./widgets/auditor-dashboard-model.ts";
 import { runGoalCompletionAuditor } from "./goal-auditor.ts";
+import { observeGoal } from "./goal-observability.ts";
 
 
 
@@ -274,6 +275,7 @@ export function createGoalCore(
 				{ triggerTurn: true, deliverAs: "followUp" },
 			);
 		},
+		observe: (ctx, event, details) => observeGoal(ctx, { event, ...details } as Parameters<typeof observeGoal>[1]),
 		getGoal: () => state.goal,
 		isActionable: (goalId) => isActionableContinuationGoal(goalId),
 	});
@@ -420,6 +422,7 @@ export function createGoalCore(
 			clearActiveAccounting();
 		}
 		appendFocusEntry(focusedGoalId, reason);
+		observeGoal(ctx, { event: "focus_changed", from: previousGoalId, to: focusedGoalId });
 		// Append ledger event for focus changes
 		try {
 			if (opts.recordLedger !== false && focusedGoalId) {
