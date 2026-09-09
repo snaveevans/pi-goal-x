@@ -52,6 +52,7 @@
     "test:serial": "node --experimental-strip-types --test --test-concurrency=1 tests/*.test.ts",
     "test:unit": "node scripts/run-unit-tests.mjs",
     "test:integration": "node scripts/run-unit-tests.mjs integration",
+    "test:real-api": "node --experimental-strip-types scripts/real-pi-api-smoke.mjs",
     "test:all": "node scripts/run-unit-tests.mjs all",
     "test:selfcheck": "node scripts/run-unit-tests.mjs --selfcheck",
     "bench": "node --import ./experiments/bench/bench-adapter-hooks.mjs --experimental-strip-types ./experiments/bench/run-bench.mjs",
