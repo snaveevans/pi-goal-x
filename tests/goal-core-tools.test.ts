@@ -378,6 +378,32 @@ test("update_goal(complete) with a rejection keeps the goal open with feedback",
 	}
 });
 
+test("update_goal(complete) after a rejection hands the previous audit report to the next audit", async () => {
+	const f = makeFixture();
+	const calls: any[] = [];
+	const reports = [
+		{ approved: false, disapproved: true, output: "Key failures:\n- Timing results are not reported.\n<disapproved/>", model: "mock" },
+		{ approved: false, disapproved: true, output: "Still missing timing.\n<disapproved/>", model: "mock" },
+	];
+	try {
+		const h = createHarness({
+			cwd: f.cwd,
+			sessionEntries: f.sessionEntries,
+			runCompletionAuditor: async (args: any) => { calls.push(args); return reports[calls.length - 1]; },
+		});
+		await start(h);
+		const update = h.tools.get("update_goal")!;
+		await (update.execute as any)("update-a", { status: "complete" }, undefined, undefined, h.ctx);
+		assert.ok(!calls[0].previousAuditReport, "first audit has no previous report");
+		h.core.clearAuditResult();
+		await (update.execute as any)("update-b", { status: "complete" }, undefined, undefined, h.ctx);
+		assert.equal(calls.length, 2, "second completion attempt runs the auditor again");
+		assert.equal(calls[1].previousAuditReport, reports[0]!.output, "second audit receives the first rejection's report");
+	} finally {
+		f.cleanup();
+	}
+});
+
 // ── update_goal(blocked) ─────────────────────────────────────────────────────
 
 test("update_goal(blocked) records a distinct agent-blocked state from active", async () => {
