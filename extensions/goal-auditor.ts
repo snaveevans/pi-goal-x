@@ -82,6 +82,14 @@ function renderAuditorTaskTree(tasks: GoalTask[], indent: number): string[] {
 	for (const task of tasks) {
 		const marker = task.status === "complete" ? "[x]" : task.status === "skipped" ? "[~]" : "[ ]";
 		lines.push(`${prefix}${marker} ${task.id}: ${escapePromptPayload(task.title)}`);
+		const details: [string, string | undefined][] = [
+			["requirement", task.verificationContract],
+			["evidence", task.evidence],
+			["skipped", task.skipReason],
+		];
+		for (const [label, value] of details) {
+			if (value?.trim()) lines.push(`${prefix}    ${label}: ${escapePromptPayload(value.trim())}`);
+		}
 		if (task.subtasks && task.subtasks.length > 0) {
 			lines.push(...renderAuditorTaskTree(task.subtasks, indent + 1));
 		}
@@ -172,14 +180,19 @@ export function buildGoalAuditorPrompt(args: {
 	/** P1-6: parent-rendered evidence (ledger tail + turn trail) so the audit
 	 * starts warm instead of re-deriving what the parent session already holds. */
 	warmContext?: string | null;
+	/** The report of this goal's previous audit, when that audit disapproved. */
+	previousAuditReport?: string | null;
 }): string {
+	const previousAuditReport = args.previousAuditReport?.trim();
 	return [
 		"You are the independent completion auditor for pi-goal. Decide whether the user's objective is actually satisfied.",
 		"Audit checklist:",
-		"1. Extract the real success criteria, including every explicit requirement and quality/reader outcome. Disapprove missing, contradicted, weakly verified or uninspectable requirements.",
+		"1. The confirmed completion requirements (the goal's verification contract and each task's requirement) are the checklist; the objective is context for what they mean. Disapprove any confirmed requirement that is missing, contradicted, weakly verified or uninspectable. Disapprove for a gap outside the confirmed requirements only when the gap is material to the objective, and say so explicitly.",
 		"2. Inspect real artifacts with read/grep/find/ls/bash as needed. Do not mutate files or run destructive commands. Paperwork, intent, file/word counts, build success and plausible summaries alone are not proof.",
 		...(!args.settings?.disableContracts && args.goal.verificationContract?.trim()
 			? ["3. Verify that the executor has satisfied every item in the <verification_contract>. If any item is missing or weakly addressed, disapprove."] : []),
+		...(previousAuditReport
+			? ["3b. The previous audit of this goal disapproved; its report is in <previous_audit>. For each of its findings, state whether it is fixed, still open, or no longer applicable, checking real artifacts. New findings are allowed only when material."] : []),
 		"4. Explain missing or weak evidence concisely. Disapprove alpha scaffold, generated template, shallow draft or proxy milestones lacking the user-facing value requested.",
 		"5. End with exactly <approved/> only if the objective is truly complete; otherwise end with exactly <disapproved/>.",
 		"",
@@ -221,6 +234,21 @@ export function buildGoalAuditorPrompt(args: {
 			"<warm_context>",
 			escapePromptPayload(args.warmContext.trim()),
 			"</warm_context>",
+		] : []),
+		...(args.settings?.auditorWorkspaces?.length || args.settings?.auditorEnvironment ? [
+			"",
+			"Inspection guidance from the user's settings (guidance, not evidence). You may inspect these workspaces in addition to the current directory, and follow the environment note to run verification:",
+			"<inspection_guidance>",
+			...(args.settings.auditorWorkspaces ?? []).map((workspace) => `workspace: ${escapePromptPayload(workspace)}`),
+			...(args.settings.auditorEnvironment ? [`environment: ${escapePromptPayload(args.settings.auditorEnvironment)}`] : []),
+			"</inspection_guidance>",
+		] : []),
+		...(previousAuditReport ? [
+			"",
+			"Previous audit report (re-check each finding):",
+			"<previous_audit>",
+			escapePromptPayload(previousAuditReport),
+			"</previous_audit>",
 		] : []),
 
 	].join("\n");
@@ -311,6 +339,8 @@ export async function runGoalCompletionAuditor(args: {
 	settings?: GoalSettings;
 	/** P1-6: parent-rendered evidence (ledger tail + turn trail). */
 	warmContext?: string | null;
+	/** The report of this goal's previous audit, when that audit disapproved. */
+	previousAuditReport?: string | null;
 	signal?: AbortSignal;
 	onProgress?: AuditorProgressCallback;
 	/**

@@ -85,9 +85,20 @@ Use `/goal-tweak <change>` to discuss revisions to the goal and its plan. Task t
 
 ## Completion auditor
 
-When enabled, a separate agent reviews the work before the goal is accepted as complete. It checks the objective, tasks, recorded evidence, completion requirements, and workspace.
+When enabled, a separate agent reviews the work before the goal is accepted as complete. It checks the objective, tasks, recorded evidence, completion requirements, and workspace. The goal's and tasks' completion requirements are its checklist; the objective explains what they mean.
 
-If the auditor approves, the goal is archived as complete. If it identifies unmet requirements, the goal remains open with feedback describing the work still needed. You can choose the auditor model in `/goal-settings` and toggle auditing for the focused goal with `Ctrl+Shift+A`.
+If the auditor approves, the goal is archived as complete. If it identifies unmet requirements, the goal remains open with feedback describing the work still needed. The next review checks each earlier finding and reports whether it is fixed. You can choose the auditor model in `/goal-settings` and toggle auditing for the focused goal with `Ctrl+Shift+A`.
+
+If the work spans more than the project directory, such as a second repository, or is verified somewhere the auditor cannot run commands directly, such as WSL, tell the auditor in the settings file. `auditorWorkspaces` lists extra directories it may inspect, and `auditorEnvironment` describes how to run verification:
+
+```json
+{
+  "auditorWorkspaces": ["C:/Users/me/repos/second-repo"],
+  "auditorEnvironment": "Builds and tests run in WSL: wsl -e bash -lc 'cd /mnt/c/Users/me/repos/project && ctest --test-dir build'"
+}
+```
+
+The auditor treats both as guidance for where to look, never as evidence.
 
 ## Progress and goal controls
 
@@ -127,6 +138,7 @@ Open `/goal-settings` to change these options. You can save defaults for all pro
 | Completion requirements (`disableContracts`) | Turn explicit goal and task completion requirements on or off. Set to `true` to disable them. |
 | Auditor disabled | Turn off independent completion review. |
 | Auditor provider, model, and thinking level | Choose which model reviews completed work and its reasoning effort. |
+| Auditor workspaces and environment (`auditorWorkspaces`, `auditorEnvironment`) | Point the auditor at extra directories and explain how to run verification. Set in the settings file. |
 
 
 ## Observability
