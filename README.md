@@ -81,6 +81,15 @@ As work progresses, the agent marks the current task, records completed work, an
 
 Tasks can also have their own completion requirements—for example, “The download contains only rows matching the active filters.” The agent records evidence against those requirements, and the completion auditor uses that evidence when reviewing the overall result.
 
+### Per-task code review gate
+
+When a task looks code- or test-changing (implementation, fix, build, calibration, integration,
+refactor, or evidence naming source files), `update_goal_task(status="complete")` runs a
+separate read-only code review first. The task remains pending when the reviewer finds an issue,
+so the executor must resolve the findings and retry completion. Documentation, research, report,
+and planning tasks do not trigger this gate. Batch task completions use the same gate for every
+code task before any task state is mutated. The review uses the configured auditor provider/model.
+
 Use `/goal-tweak <change>` to discuss revisions to the goal and its plan. Task tracking, completion requirements, and subtask depth are configurable in `/goal-settings`.
 
 ## Completion auditor

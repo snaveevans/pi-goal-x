@@ -15,6 +15,7 @@ import type { GoalTaskUpdateSpec } from "./goal-service.ts";
 import { goalDetails, renderGoalResult } from "./goal-format.ts";
 import { statusLabel, truncateText } from "./goal-core.ts";
 import { loadGoalSettings } from "./goal-settings.ts";
+import { runGoalCompletionAuditor } from "./goal-auditor.ts";
 import { buildTaskSummary, checkSubtasksComplete, findSubtaskDepthViolation, findTaskInTree, skipAllSubtasks } from "./goal-policy.ts";
 import { showTaskConfirmation, type TaskConfirmationResult } from "./goal-task-confirmation.ts";
 import {
@@ -205,6 +206,35 @@ export interface TaskProgressInput {
  evidence?: string;
  reason?: string;
 }
+
+/** Code/test tasks require a read-only review before completion. */
+export function taskNeedsCodeReview(task: Pick<GoalTask, "title" | "verificationContract"> & { evidence?: string }): boolean {
+ const text = [task.title, task.verificationContract, task.evidence].filter(Boolean).join(" ").toLowerCase();
+ if (/\b(document|documentation|docs?|research|literature|report|write[- ]?up|plan|analysis)\b/.test(text)) return false;
+ return /\b(implement|fix|build|test|code|calibrat|integrat|refactor|bug|feature|module|pipeline|script)\b|\.(?:ts|tsx|js|mjs|py|cpp|hpp|c|h|rs|go|java|cs|sql|json|ya?ml|toml)\b/.test(text);
+}
+
+async function reviewTaskBeforeCompletion(core: import("./goal-state.ts").GoalCore, ctx: ExtensionContext, task: GoalTask, evidence?: string): Promise<string | undefined> {
+ if (!taskNeedsCodeReview({ ...task, evidence })) return undefined;
+ const goal = core.state.goal;
+ if (!goal) return "Task review could not start because no goal is focused.";
+ const reviewGoal: import("./goal-record.ts").GoalRecord = {
+  ...goal,
+  objective: `Review the code and test changes for task ${task.id}: ${task.title}`,
+  taskList: { tasks: [{ ...task, status: "pending" }], blockCompletion: true, proposedAt: new Date().toISOString() },
+ };
+ const result = await runGoalCompletionAuditor({
+  ctx,
+  goal: reviewGoal,
+  detailedSummary: `Task under review: ${task.id}\nTitle: ${task.title}\nVerification contract: ${task.verificationContract ?? "(none)"}\nExecutor evidence: ${evidence ?? "(none)"}`,
+  completionSummary: "This task is proposed for completion. Review the repository changes and tests before allowing completion.",
+  settings: loadGoalSettings(ctx.cwd),
+ });
+ if (result.approved) return undefined;
+ const detail = result.error ? `Task review failed: ${result.error}` : result.output.trim() || "The independent code review did not approve this task.";
+ return `Task ${task.id} remains pending because its code review did not approve completion. Resolve the findings and retry.\n\n${detail}`;
+}
+
 function progressSpec(input: TaskProgressInput, core: import("./goal-state.ts").GoalCore, ctx: ExtensionContext): GoalTaskUpdateSpec {
  const settings = loadGoalSettings(ctx.cwd);
  const now = nowIso();
@@ -414,6 +444,13 @@ pi.registerTool(defineTool({
    if (loadGoalSettings(ctx.cwd).disableTasks) return fail("update_goal_task is disabled by settings (disableTasks: true).");
    if (!core.state.goal) return fail("No goal is focused.");
    if (core.state.goal.status !== "active") return fail(`update_goal_task applies only to an active goal (current status: ${core.state.goal.status}).`);
+   for (const update of updates) {
+    if (update.status !== "complete") continue;
+    const task = findTaskInTree(core.state.goal.taskList?.tasks ?? [], update.task_id);
+    if (!task) return fail(`Unknown task: ${update.task_id}`);
+    const reviewFailure = await reviewTaskBeforeCompletion(core, ctx, task, update.evidence);
+    if (reviewFailure) return fail(reviewFailure);
+   }
    const result = core.goalService.updateTasks(ctx, updates.map(u => progressSpec(u, core, ctx)));
    if (!result.ok) return fail(result.message);
    core.updateUI(ctx);
@@ -483,6 +520,10 @@ pi.registerTool(defineTool({
 
 		if (params.status === "complete") {
 			const evidence = params.evidence?.trim().slice(0, 200) || undefined;
+			const task = findTaskInTree(core.state.goal.taskList.tasks, params.task_id);
+			if (!task) return { content: [{ type: "text", text: `Unknown task: ${params.task_id}` }], details: goalDetails(core.state.goal) };
+			const reviewFailure = await reviewTaskBeforeCompletion(core, ctx, task, evidence);
+			if (reviewFailure) return { content: [{ type: "text", text: reviewFailure }], details: goalDetails(core.state.goal) };
 			const result = core.goalService.updateTask(ctx, {
 				focusToken: taskFocus,
 				taskId: params.task_id,
