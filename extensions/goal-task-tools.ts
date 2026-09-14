@@ -223,7 +223,9 @@ async function reviewTaskBeforeCompletion(core: import("./goal-state.ts").GoalCo
   objective: `Review the code and test changes for task ${task.id}: ${task.title}`,
   taskList: { tasks: [{ ...task, status: "pending" }], blockCompletion: true, proposedAt: new Date().toISOString() },
  };
- const reviewer = core.dependencies.runTaskReview ?? core.dependencies.runCompletionAuditor ?? runGoalCompletionAuditor;
+ // Completion-auditor injections are intentionally not reused here: task
+ // completion must always receive an independent review implementation.
+ const reviewer = core.dependencies.runTaskReview ?? runGoalCompletionAuditor;
  const result = await reviewer({
   ctx,
   goal: reviewGoal,
