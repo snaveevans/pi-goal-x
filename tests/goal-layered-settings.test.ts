@@ -225,7 +225,11 @@ describe("scoped mutation", () => {
 		});
 	});
 
-	it("failed write preserves the original file (fault injection)", () => {
+	it("failed write preserves the original file (fault injection)", (t) => {
+		if (process.platform === "win32") {
+			t.skip("directory mode bits do not reliably block writes on Windows");
+			return;
+		}
 		withTempDir((dir) => {
 			const env = { PI_GOAL_GLOBAL_SETTINGS_FILE: path.join(dir, "g.json") };
 			const target = scopeTarget(dir, "global");
@@ -248,13 +252,22 @@ describe("scoped mutation", () => {
 		});
 	});
 
-	it("refuses a symlink target", () => {
+	it("refuses a symlink target", (t) => {
 		withTempDir((dir) => {
 			const env = { PI_GOAL_GLOBAL_SETTINGS_FILE: path.join(dir, "g.json") };
 			const real = path.join(dir, "real.json");
 			const link = path.join(dir, "g.json");
 			writeJson(real, {});
-			fs.symlinkSync(real, link);
+			try {
+				fs.symlinkSync(real, link);
+			} catch (error) {
+				const code = (error as NodeJS.ErrnoException).code;
+				if (code === "EPERM" || code === "EACCES") {
+					t.skip(`symbolic links unavailable: ${code}`);
+					return;
+				}
+				throw error;
+			}
 			invalidateGoalSettingsCache();
 			assert.throws(
 				() => mutateSettingsLayer({ scope: "global", cwd: dir, env, mutation: { op: "set", path: ["model"], value: "m" } }),

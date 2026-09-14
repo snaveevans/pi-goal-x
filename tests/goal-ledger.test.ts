@@ -31,7 +31,10 @@ function cleanup(ctx: GoalLedgerContext): void {
 
 test("goalLedgerPath resolves under .pi/goals", () => {
   const ctx = tempCtx();
-  assert.ok(goalLedgerPath(ctx).includes(".pi/goals/goal_events.jsonl"));
+  const ledger = goalLedgerPath(ctx);
+  assert.equal(path.basename(ledger), "goal_events.jsonl");
+  assert.equal(path.basename(path.dirname(ledger)), "goals");
+  assert.equal(path.basename(path.dirname(path.dirname(ledger))), ".pi");
   cleanup(ctx);
 });
 

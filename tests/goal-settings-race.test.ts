@@ -11,9 +11,10 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 
-const WORKER = new URL("settings-race-worker.mjs", import.meta.url).pathname;
+const WORKER = fileURLToPath(new URL("settings-race-worker.mjs", import.meta.url));
 
 test("two concurrent processes editing different keys never lose an update", async () => {
 	const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "goal-settings-race-")));

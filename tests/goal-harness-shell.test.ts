@@ -11,7 +11,11 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-test("experiment harness shell tests pass", () => {
+test("experiment harness shell tests pass", (t) => {
+	if (process.platform === "win32") {
+		t.skip("bash path and command semantics are not portable on native Windows");
+		return;
+	}
 	const script = path.resolve(import.meta.dirname, "shell", "harness.test.sh");
 	const result = spawnSync("bash", [script], { encoding: "utf8", timeout: 120_000 });
 	assert.equal(
