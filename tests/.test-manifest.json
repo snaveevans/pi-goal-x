@@ -55,6 +55,7 @@
     ".tests/goal-status.test.ts",
     ".tests/goal-surface-baseline.test.ts",
     ".tests/goal-task-lifecycle.test.ts",
+    ".tests/goal-task-review.test.ts",
     ".tests/goal-task-tools.test.ts",
     ".tests/goal-tasks.test.ts",
     ".tests/goal-tool-names.test.ts",
