@@ -2,6 +2,14 @@
 
 All notable changes to pi-goal-x are documented here.
 
+## [0.31.3] — 2026-09-14
+
+### Fixed
+
+- **RPC task approval (#52)** — task proposals use native selection dialogs on RPC and non-terminal hosts. Cancelled or unavailable dialogs preserve existing tasks; the existing headless and explicit auto-confirm policies remain supported.
+
+- **Empty-turn auto-continue loop** — `agent_end` clears the turn_end continuation timer, then `agent_settled` re-queued with `force: true` even when the run called no goal-work tools. A no-tool reply (for example "Paused. No action." after `/goal-resume`) therefore injected another checkpoint forever. Auto-continue now waits for meaningful work in that agent run. User resume, goal creation, and session kickoff still start the first continuation.
+
 ## [0.31.2] — 2026-09-08
 
 ### Changed
