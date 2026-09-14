@@ -36,7 +36,7 @@ interface StageRecord {
 	percentage: number;
 }
 
-function createHarness(cwd: string, opts: { runCompletionAuditor?: (...args: any[]) => Promise<any> } = {}) {
+function createHarness(cwd: string, opts: { runCompletionAuditor?: (...args: any[]) => Promise<any>; runTaskReview?: (...args: any[]) => Promise<any> } = {}) {
 	const handlers = new Map<string, Function>();
 	const commands = new Map<string, any>();
 	const tools = new Map<string, any>();
@@ -79,7 +79,7 @@ function createHarness(cwd: string, opts: { runCompletionAuditor?: (...args: any
 		hasPendingMessages: () => false,
 		abort: () => {},
 	} as unknown as ExtensionContext;
-	goalExtension(pi as any, { runCompletionAuditor: opts.runCompletionAuditor });
+	goalExtension(pi as any, { runCompletionAuditor: opts.runCompletionAuditor, runTaskReview: opts.runTaskReview });
 	return {
 		ctx,
 		commands,
@@ -142,6 +142,7 @@ test("full guided lifecycle: create → focus → tasks → audit → archive (�
 	mkdirSync(path.join(cwd, ".pi", "goals", "archived"), { recursive: true });
 	const staged: StageRecord[] = [];
 	const h = createHarness(cwd, {
+		runTaskReview: async () => ({ approved: true, disapproved: false, output: "ok", model: "mock/task-review" }),
 		runCompletionAuditor: async (args: any) => {
 			// §19.9 step 12: report all five audit stages through onProgress.
 			const stages: StageRecord[] = [

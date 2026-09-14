@@ -22,7 +22,7 @@ import { filterGoalSessionContext, isDelegatedGoalSession } from "./goal-session
  */
 export default function goalExtension(
 	pi: ExtensionAPI,
-	dependencies: { runCompletionAuditor?: typeof runGoalCompletionAuditor } = {},
+	dependencies: { runCompletionAuditor?: typeof runGoalCompletionAuditor; runTaskReview?: typeof runGoalCompletionAuditor } = {},
 ): void {
 	if (isDelegatedGoalSession()) {
 		// Inherit conversation without inheriting ownership of the parent's goal.

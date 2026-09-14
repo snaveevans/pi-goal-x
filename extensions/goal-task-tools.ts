@@ -223,7 +223,8 @@ async function reviewTaskBeforeCompletion(core: import("./goal-state.ts").GoalCo
   objective: `Review the code and test changes for task ${task.id}: ${task.title}`,
   taskList: { tasks: [{ ...task, status: "pending" }], blockCompletion: true, proposedAt: new Date().toISOString() },
  };
- const result = await runGoalCompletionAuditor({
+ const reviewer = core.dependencies.runTaskReview ?? core.dependencies.runCompletionAuditor ?? runGoalCompletionAuditor;
+ const result = await reviewer({
   ctx,
   goal: reviewGoal,
   detailedSummary: `Task under review: ${task.id}\nTitle: ${task.title}\nVerification contract: ${task.verificationContract ?? "(none)"}\nExecutor evidence: ${evidence ?? "(none)"}`,
@@ -447,7 +448,7 @@ pi.registerTool(defineTool({
    for (const update of updates) {
     if (update.status !== "complete") continue;
     const task = findTaskInTree(core.state.goal.taskList?.tasks ?? [], update.task_id);
-    if (!task) return fail(`Unknown task: ${update.task_id}`);
+    if (!task) continue; // Let GoalService return its typed stale-task failure.
     const reviewFailure = await reviewTaskBeforeCompletion(core, ctx, task, update.evidence);
     if (reviewFailure) return fail(reviewFailure);
    }
@@ -521,9 +522,10 @@ pi.registerTool(defineTool({
 		if (params.status === "complete") {
 			const evidence = params.evidence?.trim().slice(0, 200) || undefined;
 			const task = findTaskInTree(core.state.goal.taskList.tasks, params.task_id);
-			if (!task) return { content: [{ type: "text", text: `Unknown task: ${params.task_id}` }], details: goalDetails(core.state.goal) };
-			const reviewFailure = await reviewTaskBeforeCompletion(core, ctx, task, evidence);
-			if (reviewFailure) return { content: [{ type: "text", text: reviewFailure }], details: goalDetails(core.state.goal) };
+			if (task) {
+				const reviewFailure = await reviewTaskBeforeCompletion(core, ctx, task, evidence);
+				if (reviewFailure) return { content: [{ type: "text", text: reviewFailure }], details: goalDetails(core.state.goal) };
+			}
 			const result = core.goalService.updateTask(ctx, {
 				focusToken: taskFocus,
 				taskId: params.task_id,

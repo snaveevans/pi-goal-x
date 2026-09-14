@@ -55,7 +55,7 @@ import { observeGoal } from "./goal-observability.ts";
  */
 export interface GoalCore {
 	pi: ExtensionAPI;
-	dependencies: { runCompletionAuditor?: typeof runGoalCompletionAuditor };
+	dependencies: { runCompletionAuditor?: typeof runGoalCompletionAuditor; runTaskReview?: typeof runGoalCompletionAuditor };
 	state: { goal: GoalRecord | null };
 	readonly goalsById: Map<string, GoalRecord>;
 	readonly focusedGoalId: string | null;
@@ -136,7 +136,7 @@ export interface GoalCore {
 
 export function createGoalCore(
 	pi: ExtensionAPI,
-	dependencies: { runCompletionAuditor?: typeof runGoalCompletionAuditor } = {},
+	dependencies: { runCompletionAuditor?: typeof runGoalCompletionAuditor; runTaskReview?: typeof runGoalCompletionAuditor } = {},
 ): GoalCore {
 	let goalsById = new Map<string, GoalRecord>();
 	let focusedGoalId: string | null = null;
