@@ -17,7 +17,7 @@
  */
 
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -51,8 +51,12 @@ function fixturePath(rel: string): string {
 	return path.join(TEST_DIR, "fixtures", rel);
 }
 
+const tempDirs: string[] = [];
+after(() => { for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true }); });
+
 function tempCwd(): string {
 	const cwd = mkdtempSync(path.join(tmpdir(), "goal-golden-"));
+	tempDirs.push(cwd);
 	mkdirSync(path.join(cwd, GOALS_DIR), { recursive: true });
 	return cwd;
 }
