@@ -7,7 +7,7 @@
  * --apply without --confirm-pi-closed fails.
  */
 
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -37,8 +37,12 @@ interface Fixture {
 	legacyContent: string;
 }
 
+const tempDirs: string[] = [];
+after(() => { for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true }); });
+
 function makeSessionFixture(): Fixture {
 	const dir = mkdtempSync(path.join(tmpdir(), "goal-recover-"));
+	tempDirs.push(dir);
 	const file = path.join(dir, "session.jsonl");
 	const legacyContent = `[GOAL CHECKPOINT goalId=g1]\nContinue working toward the active pi goal.\n${"x".repeat(6000)}`;
 	const lines = [

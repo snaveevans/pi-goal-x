@@ -148,8 +148,8 @@ test("confirmed draft creates the proposed goal and agent-selected task plan tog
 test("/goal-direct and /sisyphus-direct create goals immediately", async () => {
 	const cwd = mkdtempSync(path.join(tmpdir(), "goal-palette-sisy-"));
 	mkdirSync(path.join(cwd, ".pi", "goals", "archived"), { recursive: true });
+	const h = createHarness(cwd);
 	try {
-		const h = createHarness(cwd);
 		await h.handlers.get("session_start")?.({ reason: "start" }, h.ctx);
 		await h.commands.get("goal-direct")!.handler("Create hello.txt", h.ctx);
 		await h.commands.get("sisyphus-direct")!.handler("1) create a.txt 2) create b.txt", h.ctx);
@@ -159,6 +159,8 @@ test("/goal-direct and /sisyphus-direct create goals immediately", async () => {
 		assert.ok(parsed.some((goal) => goal?.sisyphus === true), "sisyphus direct mode");
 		assert.ok(parsed.some((goal) => goal?.sisyphus === false), "regular direct mode");
 	} finally {
+		// Direct creation schedules continuation work that would recreate goal files after removal.
+		await h.handlers.get("session_shutdown")?.({}, h.ctx);
 		try { rmSync(cwd, { recursive: true, force: true }); } catch {}
 	}
 });
