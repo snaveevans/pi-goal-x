@@ -16,6 +16,12 @@ export interface GoalTask {
   evidence?: string;
   skipReason?: string;
   verificationContract?: string;
+  /** Agent-declared whether this task changes code and needs a code review. */
+  codeChange?: boolean;
+  /** Optional task category used by configurable review exclusions. */
+  reviewType?: string;
+  /** Git state at the task's first start; kept across restarts so a retry review still covers rejected work. */
+  reviewBaseline?: string;
   lightweightSubtasks?: boolean;
   subtasks?: GoalTask[];
 }
@@ -24,6 +30,8 @@ export interface GoalTaskList {
   tasks: GoalTask[];
   blockCompletion: boolean;
   proposedAt: string;
+  /** Git state when the list was set; reviews tasks completed without a start. */
+  reviewBaseline?: string;
 }
 
 export interface GoalUsage {
@@ -255,6 +263,9 @@ export function normalizeTaskItem(raw: Record<string, unknown>): GoalTask | unde
 		evidence: typeof raw.evidence === "string" ? raw.evidence : undefined,
 		skipReason: typeof raw.skipReason === "string" ? raw.skipReason : undefined,
 		verificationContract: typeof raw.verificationContract === "string" ? raw.verificationContract : undefined,
+		...(typeof raw.codeChange === "boolean" ? { codeChange: raw.codeChange } : {}),
+		...(typeof raw.reviewType === "string" && raw.reviewType.trim() ? { reviewType: raw.reviewType.trim() } : {}),
+		...(typeof raw.reviewBaseline === "string" && raw.reviewBaseline.trim() ? { reviewBaseline: raw.reviewBaseline.trim() } : {}),
 		lightweightSubtasks: raw.lightweightSubtasks === true ? true : undefined,
 		subtasks,
 	};
@@ -273,6 +284,7 @@ export function normalizeTaskList(value: unknown): GoalTaskList | undefined {
 		tasks,
 		blockCompletion: raw.blockCompletion === true,
 		proposedAt: typeof raw.proposedAt === "string" ? raw.proposedAt : nowIso(),
+		...(typeof raw.reviewBaseline === "string" && raw.reviewBaseline.trim() ? { reviewBaseline: raw.reviewBaseline.trim() } : {}),
 	};
 }
 
