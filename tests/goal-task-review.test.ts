@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { gitBaseline, gitTaskDiff, taskNeedsCodeReview, taskReviewSkipReason } from "../extensions/goal-task-tools.ts";
+import { gitBaseline, gitTaskDiff, taskNeedsCodeReview, taskReviewSkipReason } from "../extensions/goal-task-review.ts";
 
 test("code-changing tasks require a review", () => {
 	assert.equal(taskNeedsCodeReview({ title: "Implement the parser", verificationContract: "Tests pass", changedFiles: "src/parser.ts" }), true);

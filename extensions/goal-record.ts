@@ -17,12 +17,10 @@ export interface GoalTask {
   evidence?: string;
   skipReason?: string;
   verificationContract?: string;
-  /** Agent-declared whether this task changes code and needs a code review. */
   codeChange?: boolean;
-  /** Optional task category used by configurable review exclusions. */
   reviewType?: string;
   /** Git state at the task's first start; kept across restarts so a retry review still covers rejected work. */
-  reviewBaseline?: string;
+  reviewBaseline?: ReviewBaseline;
   lightweightSubtasks?: boolean;
   subtasks?: GoalTask[];
 }
@@ -32,7 +30,13 @@ export interface GoalTaskList {
   blockCompletion: boolean;
   proposedAt: string;
   /** Git state when the list was set; reviews tasks completed without a start. */
-  reviewBaseline?: string;
+  reviewBaseline?: ReviewBaseline;
+}
+
+export interface ReviewBaseline {
+  revision: string;
+  /** Blob hash per path untracked at capture, so later edits to those files still count as task changes. */
+  untracked: Record<string, string>;
 }
 
 export interface GoalUsage {
@@ -250,6 +254,16 @@ export function normalizeUsage(value: unknown): GoalUsage {
 	return { tokensUsed, activeSeconds };
 }
 
+function normalizeReviewBaseline(value: unknown): ReviewBaseline | undefined {
+	const raw = asRecord(value);
+	const untracked = asRecord(raw?.untracked);
+	if (!raw || typeof raw.revision !== "string" || !raw.revision || !untracked) return undefined;
+	return {
+		revision: raw.revision,
+		untracked: Object.fromEntries(Object.entries(untracked).filter((entry): entry is [string, string] => typeof entry[1] === "string")),
+	};
+}
+
 export function normalizeTaskItem(raw: Record<string, unknown>): GoalTask | undefined {
 	const id = typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : "";
 	const title = typeof raw.title === "string" ? raw.title.trim() : "";
@@ -274,7 +288,7 @@ export function normalizeTaskItem(raw: Record<string, unknown>): GoalTask | unde
 		verificationContract: typeof raw.verificationContract === "string" ? raw.verificationContract : undefined,
 		...(typeof raw.codeChange === "boolean" ? { codeChange: raw.codeChange } : {}),
 		...(typeof raw.reviewType === "string" && raw.reviewType.trim() ? { reviewType: raw.reviewType.trim() } : {}),
-		...(typeof raw.reviewBaseline === "string" && raw.reviewBaseline.trim() ? { reviewBaseline: raw.reviewBaseline.trim() } : {}),
+		...(normalizeReviewBaseline(raw.reviewBaseline) ? { reviewBaseline: normalizeReviewBaseline(raw.reviewBaseline) } : {}),
 		lightweightSubtasks: raw.lightweightSubtasks === true ? true : undefined,
 		subtasks,
 	};
@@ -293,7 +307,7 @@ export function normalizeTaskList(value: unknown): GoalTaskList | undefined {
 		tasks,
 		blockCompletion: raw.blockCompletion === true,
 		proposedAt: typeof raw.proposedAt === "string" ? raw.proposedAt : nowIso(),
-		...(typeof raw.reviewBaseline === "string" && raw.reviewBaseline.trim() ? { reviewBaseline: raw.reviewBaseline.trim() } : {}),
+		...(normalizeReviewBaseline(raw.reviewBaseline) ? { reviewBaseline: normalizeReviewBaseline(raw.reviewBaseline) } : {}),
 	};
 }
 

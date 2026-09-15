@@ -103,18 +103,15 @@ function mapEvent(event: GoalLedgerEvent, taskTitles: ReadonlyMap<string, string
 		}
 		case "task_reopened":
 			return { at: event.at, kind: "task", text: `Reopened ${quote(titleFor(taskTitles, event.taskId))}.` };
-		case "task_review":
-			return {
-				at: event.at,
-				kind: "verification",
-				text: event.verdict === "approved"
-					? `Code review approved ${quote(titleFor(taskTitles, event.taskId))}.`
-					: event.verdict === "skipped"
-						? `Code review skipped for ${quote(titleFor(taskTitles, event.taskId))}.`
-						: event.verdict === "error"
-							? `Code review failed for ${quote(titleFor(taskTitles, event.taskId))}${event.report ? ` — ${truncateText(oneLine(event.report), ACTIVITY_REASON_MAX)}` : ""}.`
-							: `Code review rejected ${quote(titleFor(taskTitles, event.taskId))}${event.report ? ` — ${truncateText(oneLine(event.report), ACTIVITY_REASON_MAX)}` : ""}.`,
-			};
+		case "task_review": {
+			const title = quote(titleFor(taskTitles, event.taskId));
+			const report = event.report ? ` — ${truncateText(oneLine(event.report), ACTIVITY_REASON_MAX)}` : "";
+			const text = event.verdict === "approved" ? `Code review approved ${title}.`
+				: event.verdict === "skipped" ? `Code review skipped for ${title}.`
+				: event.verdict === "error" ? `Code review failed for ${title}${report}.`
+				: `Code review rejected ${title}${report}.`;
+			return { at: event.at, kind: "verification", text };
+		}
 		case "completion_requested":
 			return { at: event.at, kind: "verification", text: "Requested completion review." };
 		case "audit_started":

@@ -33,3 +33,18 @@ Setback: the fail-closed rule made test harnesses that complete tasks call the r
 - Start baselines are computed before calling `GoalService`, because `updateTaskAttempt` retries its update closure once on a conflicting write and batch validation dry-runs closures. Also covered only by the existing suite.
 
 Validation: `tsc`, eslint, unit suite 931 pass / 5 skipped, integration 30 pass / 1 skipped, lifecycle E2E and review helper files 17 pass / 1 skipped. No test reached the real reviewer.
+
+## 2026-09-15 — Style findings
+
+Refactor with no behaviour change, after syncing upstream v0.31.4:
+
+- The gate moved from `goal-task-tools.ts` into `goal-task-review.ts`, so the task tools no longer mix git process work with task structure.
+- The baseline is a typed `ReviewBaseline` (`{ revision, untracked }`) instead of a string packed with an `UNTRACKED` section. Ledger events keep only the revision. Goal files holding the old string form lose the baseline on load, so those tasks are reviewed as unclassifiable.
+- One `git` helper replaces six copies of the exec options, and changed files and the diff share a single `git diff --name-only`.
+- Removed the `try/catch` around the reviewer: `runGoalCompletionAuditor` already returns failures as an `error` result.
+- The settings menu derives its boolean keys from the settings rows, dropping a dead `auditorProjectResources` branch; activity rendering computes the review report suffix once.
+- Doc comments that restated field names on `codeChange`, `reviewType`, `code_change` and `review_type` were removed. Settings field comments stay, because that interface documents its fields.
+
+Kept on purpose: the `undefined as unknown as` defaults in `goal-settings.ts` (the file's existing idiom) and the multi-place settings registration (a redesign of the settings system, not a style fix).
+
+Validation: `tsc`, eslint, unit suite 956 pass / 5 skipped, integration 30 pass / 1 skipped; after the final type fix, task tool and review gate files 68 pass / 1 skipped. No test reached the real reviewer.

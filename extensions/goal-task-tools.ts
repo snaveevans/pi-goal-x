@@ -8,8 +8,6 @@
  */
 
 import { StringEnum, Type } from "@earendil-works/pi-ai";
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { defineTool, type AgentToolResult, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 
@@ -17,14 +15,14 @@ import type { GoalTaskUpdateSpec } from "./goal-service.ts";
 import { goalDetails, renderGoalResult } from "./goal-format.ts";
 import { statusLabel, truncateText } from "./goal-core.ts";
 import { loadGoalSettings } from "./goal-settings.ts";
-import { runGoalCompletionAuditor } from "./goal-auditor.ts";
 import { buildTaskSummary, checkSubtasksComplete, findSubtaskDepthViolation, findTaskInTree, skipAllSubtasks } from "./goal-policy.ts";
+import { gitBaseline, reviewTaskBeforeCompletion } from "./goal-task-review.ts";
 import { showTaskConfirmation, type TaskConfirmationResult } from "./goal-task-confirmation.ts";
 import {
 	SET_GOAL_TASKS_TOOL_NAME,
 	UPDATE_GOAL_TASK_TOOL_NAME,
 } from "./goal-tool-names.ts";
-import { nowIso, currentTaskIdIsPending, type GoalTask, type GoalTaskList } from "./goal-record.ts";
+import { nowIso, currentTaskIdIsPending, type GoalTask, type GoalTaskList, type ReviewBaseline } from "./goal-record.ts";
 import type { GoalLedgerEvent } from "./goal-ledger.ts";
 
 export const MAX_TASKS = 50;
@@ -34,9 +32,7 @@ export interface FlatTaskInput {
 	title: string;
 	parent_id?: string;
 	verification_contract?: string;
-	/** Whether this task changes code and should receive a per-task review. */
 	code_change?: boolean;
-	/** Optional category matched by taskReviewExcludedTypes settings. */
 	review_type?: string;
 	lightweight_subtasks?: boolean;
 }
@@ -219,130 +215,6 @@ export interface TaskProgressInput {
  reason?: string;
 }
 
-function untrackedFileHashes(cwd: string): Map<string, string> {
- const files = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split(/\r?\n/).filter(Boolean);
- if (!files.length) return new Map();
- // Paths go through stdin: a large untracked set would exceed the Windows command-line limit.
- const hashes = execFileSync("git", ["hash-object", "--stdin-paths"], { cwd, encoding: "utf8", input: files.join("\n"), stdio: ["pipe", "pipe", "ignore"] }).split(/\r?\n/).filter(Boolean);
- return new Map(files.map((file, index) => [file, hashes[index]!]));
-}
-
-export function gitBaseline(cwd: string): string | undefined {
- try {
-  const stash = execFileSync("git", ["stash", "create", "per-task-review"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-  const head = stash || execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-  const untracked = [...untrackedFileHashes(cwd)].map(([file, hash]) => `${hash}\t${file}`).join("\n");
-  return `${head}\n${untracked ? `UNTRACKED\n${untracked}` : ""}`;
- } catch {
-  return undefined;
- }
-}
-
-export function gitTaskChangedFiles(cwd: string, baseline: string | undefined): string[] | undefined {
- if (!baseline) return undefined;
- const [revision, ...rest] = baseline.split("\n");
- const startingUntracked = new Map((rest[0] === "UNTRACKED" ? rest.slice(1) : []).map((line) => {
-  const [hash, file] = line.split("\t");
-  return [file!, hash!];
- }));
- try {
-  const tracked = execFileSync("git", ["diff", "--name-only", revision!, "--"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split(/\r?\n/).filter(Boolean);
-  const changedUntracked = [...untrackedFileHashes(cwd)].filter(([file, hash]) => startingUntracked.get(file) !== hash).map(([file]) => file);
-  return [...new Set([...tracked, ...changedUntracked])];
- } catch {
-  return undefined;
- }
-}
-
-const MAX_TASK_DIFF_CHARS = 120000;
-
-export function gitTaskDiff(cwd: string, baseline: string | undefined): string {
- if (!baseline) return "(no git baseline available)";
- const [revision] = baseline.split("\n");
- try {
-  const tracked = execFileSync("git", ["diff", "--binary", revision!, "--"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-  const trackedFiles = new Set(execFileSync("git", ["diff", "--name-only", revision!, "--"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split(/\r?\n/).filter(Boolean));
-  const newFiles = (gitTaskChangedFiles(cwd, baseline) ?? []).filter((file) => !trackedFiles.has(file));
-  const untracked = newFiles.map((file) => {
-   try { return `\n--- untracked: ${file} ---\n${readFileSync(`${cwd}/${file}`, "utf8")}`; } catch { return `\n--- untracked: ${file} (unreadable) ---`; }
-  }).join("\n");
-  const full = tracked + untracked;
-  if (full.length <= MAX_TASK_DIFF_CHARS) return full || "(no changes since baseline)";
-  return `${full.slice(0, MAX_TASK_DIFF_CHARS)}\n\n[Diff truncated: showing ${MAX_TASK_DIFF_CHARS} of ${full.length} characters. Inspect these changed files in the workspace before approving:\n${[...trackedFiles, ...newFiles].join("\n")}]`;
- } catch {
-  return "(could not read git diff for baseline)";
- }
-}
-
-export function taskReviewSkipReason(task: Pick<GoalTask, "reviewType">, options: { disableTaskReviews?: boolean; auditorDisabled?: boolean; excludedTypes?: readonly string[] }): string | undefined {
- if (options.disableTaskReviews) return "Per-task reviews disabled in settings.";
- if (options.auditorDisabled) return "Auditor disabled.";
- if (task.reviewType && options.excludedTypes?.some((type) => type.toLowerCase() === task.reviewType!.toLowerCase())) return `Review type '${task.reviewType}' excluded by settings.`;
- return undefined;
-}
-
-/** Code-changing tasks require a read-only review before completion. */
-export function taskNeedsCodeReview(task: Pick<GoalTask, "title" | "verificationContract" | "codeChange"> & { evidence?: string; changedFiles?: string }): boolean {
- // New task lists carry the agent's semantic decision. It is authoritative:
- // task prose and completion evidence are not a reliable classifier.
- if (typeof task.codeChange === "boolean") return task.codeChange;
- // For legacy tasks, actual changed files are stronger evidence than prose.
- if (task.changedFiles !== undefined) return task.changedFiles.split(/\r?\n/).some((file) => /\.(?:ts|tsx|js|mjs|py|cpp|hpp|c|h|rs|go|java|cs|sql)$/i.test(file.trim()));
- // Without a label or observable changes the task cannot be classified;
- // fail closed into a review rather than guessing from prose.
- return true;
-}
-
-async function reviewTaskBeforeCompletion(core: import("./goal-state.ts").GoalCore, ctx: ExtensionContext, task: GoalTask, evidence?: string): Promise<{ failure?: string; approval?: GoalLedgerEvent }> {
- const goal = core.state.goal;
- if (!goal) return { failure: "Task review could not start because no goal is focused." };
- const reviewBaseline = task.reviewBaseline ?? goal.taskList?.reviewBaseline;
- const settings = loadGoalSettings(ctx.cwd);
- const skip = (report: string) => {
-  core.goalService.appendEvents(ctx, [{ type: "task_review", goalId: goal.id, taskId: task.id, verdict: "skipped", report, baseline: reviewBaseline, at: nowIso() }]);
-  return {};
- };
- const reason = taskReviewSkipReason(task, { disableTaskReviews: settings.disableTaskReviews, auditorDisabled: settings.disabled || goal.skipAuditor, excludedTypes: settings.taskReviewExcludedTypes });
- if (reason) return skip(reason);
- const changedFiles = task.codeChange === undefined ? gitTaskChangedFiles(ctx.cwd, reviewBaseline)?.join("\n") : undefined;
- if (!taskNeedsCodeReview({ ...task, evidence, changedFiles })) return skip("Task does not change code.");
- const taskDiff = gitTaskDiff(ctx.cwd, reviewBaseline);
- const reviewGoal: import("./goal-record.ts").GoalRecord = {
-  ...goal,
-  objective: `Review the code and test changes for task ${task.id}: ${task.title}`,
-  taskList: { tasks: [{ ...task, status: "pending" }], blockCompletion: true, proposedAt: new Date().toISOString() },
- };
- // Completion-auditor injections are intentionally not reused here: task
- // completion must always receive an independent review implementation.
- const reviewer = core.dependencies.runTaskReview ?? runGoalCompletionAuditor;
- let result: Awaited<ReturnType<typeof runGoalCompletionAuditor>>;
- try {
-  result = await reviewer({
-   ctx,
-   goal: reviewGoal,
-   detailedSummary: `Task under review: ${task.id}\nTitle: ${task.title}\nCode change label: ${task.codeChange === undefined ? "legacy/inferred" : String(task.codeChange)}\nReview baseline: ${reviewBaseline ?? "(unavailable)"}\nTask diff summary:\n${taskDiff}\nVerification contract: ${task.verificationContract ?? "(none)"}\nExecutor evidence: ${evidence ?? "(none)"}`,
-   completionSummary: `This task is proposed for completion. Review only this task's complete diff since the baseline, including untracked files, and its associated tests before allowing completion.\n\nTASK DIFF:\n${taskDiff}`,
-   settings,
-  });
- } catch (error) {
-  result = { approved: false, disapproved: true, output: "", error: error instanceof Error ? error.message : String(error) };
- }
- const event: GoalLedgerEvent = {
-  type: "task_review",
-  goalId: goal.id,
-  taskId: task.id,
-  verdict: result.approved ? "approved" : result.error ? "error" : "disapproved",
-  report: truncateText(result.error ?? (result.output.trim() || "The independent code review did not approve this task."), 4000),
-  baseline: reviewBaseline,
-  at: nowIso(),
- };
- // Callers write an approval together with the completion, so a completion that never commits leaves no approval behind.
- if (result.approved) return { approval: event };
- core.goalService.appendEvents(ctx, [event]);
- const detail = result.error ? `Task review failed: ${result.error}` : result.output.trim() || "The independent code review did not approve this task.";
- return { failure: `Task ${task.id} remains pending because its code review did not approve completion. Resolve the findings and retry.\n\n${detail}` };
-}
-
 /** Dry-runs a batch in order, so a batch that validation would reject never starts a paid review. */
 function batchValidationFailure(tasks: GoalTask[], specs: GoalTaskUpdateSpec[]): string | undefined {
  const tree = structuredClone(tasks);
@@ -358,7 +230,7 @@ function batchValidationFailure(tasks: GoalTask[], specs: GoalTaskUpdateSpec[]):
  return undefined;
 }
 
-function progressSpec(input: TaskProgressInput, core: import("./goal-state.ts").GoalCore, ctx: ExtensionContext, startBaseline?: string): GoalTaskUpdateSpec {
+function progressSpec(input: TaskProgressInput, core: import("./goal-state.ts").GoalCore, ctx: ExtensionContext, startBaseline?: ReviewBaseline): GoalTaskUpdateSpec {
  const settings = loadGoalSettings(ctx.cwd);
  const now = nowIso();
  const evidence = input.evidence?.trim().slice(0, 200) || undefined;

@@ -388,10 +388,11 @@ export function registerGoalCommands(core: GoalCore): void {
 		{ key: "oracleProjectResources", label: "oracle project resources", section: "Blocker Oracle", kind: "boolean", path: ["oracle", "projectResources"] },
 		{ key: "oracleMaxFailedAttemptsPerBlocker", label: "max failed attempts per blocker", section: "Blocker Oracle", kind: "positiveInteger", path: ["oracle", "maxFailedAttemptsPerBlocker"] },
 	];
+	const BOOLEAN_SETTING_KEYS = new Set<string>(SETTING_ROWS.filter((row) => row.kind === "boolean" && !row.path).map((row) => row.key));
 
 	function settingsValue(config: GoalSettings, key: keyof GoalSettings | string): string {
-		if (key === "disabled" || key === "disableTasks" || key === "disableContracts" || key === "disableTaskReviews" || key === "autoSelectSingleGoal" || key === "auditorProjectResources" || key === "hideUnfocusedBanner") {
-			return config[key] === true ? "true" : "false";
+		if (BOOLEAN_SETTING_KEYS.has(key)) {
+			return (config as Record<string, unknown>)[key] === true ? "true" : "false";
 		}
 		if (key === "subtaskDepth") return config.subtaskDepth !== undefined ? String(config.subtaskDepth) : "1";
 		if (key === "maxAutonomousRuns") return config.maxAutonomousRuns === 0 ? "0 (disabled)" : String(config.maxAutonomousRuns ?? "unlimited (default)");
