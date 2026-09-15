@@ -11,7 +11,8 @@ import { loadGoalSettings } from "./goal-settings.ts";
 import { DIALOG_UNAVAILABLE_HINT, proposalDialogFailureMessage, formatQuestionnaireAnswers, runGoalQuestionnaire, shouldAutoConfirmProposal, showProposalDialog, type GoalQuestionnaireQuestion, type ProposalDecision } from "./goal-questionnaire.ts";
 import { currentTaskIdIsPending, nowIso, type GoalRecord, type GoalTaskList } from "./goal-record.ts";
 import type { GoalCore } from "./goal-state.ts";
-import { convertFlatTasks, countTasks, mergeTasksWithExisting, gitBaseline, type FlatTaskInput } from "./goal-task-tools.ts";
+import { convertFlatTasks, countTasks, mergeTasksWithExisting, type FlatTaskInput } from "./goal-task-tools.ts";
+import { gitBaseline } from "./goal-task-review.ts";
 import { PROPOSE_DRAFT_TOOL_NAME, QUESTIONNAIRE_TOOL_NAME, QUESTION_TOOL_NAME } from "./goal-tool-names.ts";
 
 export type GoalDraftMode = GoalDraftingFocus | "tweak";

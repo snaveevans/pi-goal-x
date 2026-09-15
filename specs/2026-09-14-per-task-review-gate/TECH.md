@@ -2,7 +2,7 @@
 
 ## Baselines
 
-`gitBaseline` captures `git stash create` (falling back to `HEAD`) plus an `UNTRACKED` inventory of `<blob hash>\t<path>` lines, hashed through `git hash-object --stdin-paths` so large inventories do not hit the Windows command-line limit.
+The gate lives in `extensions/goal-task-review.ts`. `gitBaseline` returns a `ReviewBaseline` of `{ revision, untracked }`: `revision` is `git stash create` (falling back to `HEAD`), and `untracked` maps each untracked path to its blob hash, computed through `git hash-object --stdin-paths` so large inventories do not hit the Windows command-line limit. Ledger `task_review` events record only the revision.
 
 - `GoalTaskList.reviewBaseline` is written by `set_goal_tasks` and guided drafting when the list is set.
 - `GoalTask.reviewBaseline` is written on the first `start` only (`task.reviewBaseline ?? baseline`). `mergeTasksWithExisting` preserves an existing task baseline.
