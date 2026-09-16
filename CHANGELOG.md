@@ -2,6 +2,27 @@
 
 All notable changes to pi-goal-x are documented here.
 
+## Fork note — cxh0312/pi-goal-x (based on upstream v0.31.5)
+
+Fork of `tmonk/pi-goal-x`, pinned by the desktop app's preset as
+`https://github.com/cxh0312/pi-goal-x.git@v0.31.5-pi-rpc-dialogs.1`. Only
+difference from upstream v0.31.5:
+
+- **`runGoalQuestionnaire` no longer force-falls-back to per-question dialogs in
+  `"rpc"` mode.** Mode is not a capability signal: pi-web runs sessions in
+  `"rpc"` mode yet does render TUI components through a headless TUI (line
+  capture + key forwarding), so a `/goal` draft asked one dialog per question
+  (auditor toggle + each question + a separate confirmation = 6 dialogs) instead
+  of the rich tabbed questionnaire (2 dialogs). The gate is now
+  `typeof ctx.ui.custom !== "function"`; hosts that cannot render the component
+  still degrade through the existing paths — the factory bails out with
+  `done(undefined)` when the TUI it receives lacks
+  `getShowHardwareCursor`/`setShowHardwareCursor`/`requestRender`, and that
+  result falls back to `runQuestionnaireWithBasicDialogs`. A host that throws
+  while building the component still surfaces its error (unchanged upstream
+  behavior, covered by `tests/goal-rpc-dialogs.test.ts`).
+
+
 ## [Unreleased]
 
 ## [0.31.5] — 2026-09-16

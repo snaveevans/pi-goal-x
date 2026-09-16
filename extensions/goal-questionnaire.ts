@@ -375,7 +375,12 @@ export async function runGoalQuestionnaire(ctx: ExtensionContext, rawQuestions: 
 	}
 
 	const questions = normalizeQuestionnaireQuestions(rawQuestions);
-	if (ctx.mode === "rpc" || typeof ctx.ui.custom !== "function") {
+	// `mode` is not a capability signal: pi-web runs in "rpc" mode and still renders
+	// TUI components (headless TUI + line capture + key forwarding), so the rich
+	// single-dialog questionnaire works there. The host itself decides — the factory
+	// below bails out with done(undefined) when the TUI it passes lacks the required
+	// surface, and that path already falls back to one dialog per question.
+	if (typeof ctx.ui.custom !== "function") {
 		return runQuestionnaireWithBasicDialogs(ctx, questions, auditorToggleInit);
 	}
 	const isMulti = questions.length > 1;

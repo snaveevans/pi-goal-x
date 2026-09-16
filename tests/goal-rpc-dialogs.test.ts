@@ -8,7 +8,16 @@ function host(picks: (number | undefined)[] = [], inputs: (string | undefined)[]
 	const ctx = {
 		hasUI: true, mode: "rpc", cwd: "/test",
 		ui: {
-			custom: async () => { throw new Error("RPC must never invoke custom"); },
+			// Default stub: a host that advertises `custom` but cannot render TUI
+			// components — the factory's capability bail-out yields undefined, so the
+			// questionnaire degrades to per-question dialogs. Tests that need a
+			// capable (or a throwing) host override this.
+			custom: (async (factory: unknown) => {
+				const component = (factory as (t: unknown, th: unknown, kb: unknown, done: unknown) => { render: (w: number) => string[] })(() => {}, {}, {}, () => {});
+				assert.deepEqual(component.render(80), []);
+				return undefined;
+			}) as unknown as ExtensionContext["ui"]["custom"],
+			setWorkingVisible: () => {},
 			select: async (title: string, options: string[]) => {
 				dialogs.push({ title, options });
 				const index = picks.shift();
@@ -22,8 +31,43 @@ function host(picks: (number | undefined)[] = [], inputs: (string | undefined)[]
 
 const question = { id: "scope", question: "Scope?", context: "All the details", options: ["A", "B"], recommended: 1 };
 
-test("RPC bypasses custom and preserves original values for recommendations", async () => {
+test("rpc hosts that DO render TUI components get the rich dialog (no per-question dialogs)", async () => {
+	const h = host([9]); // would pick option 9 in a per-question dialog — must never be reached
+	let sawRichRender = false;
+	h.ctx.ui.custom = (async (factory: unknown) => {
+		const tui = {
+			getShowHardwareCursor: () => true,
+			setShowHardwareCursor: () => {},
+			requestRender: () => {},
+			terminal: { rows: 40, columns: 92 },
+		};
+		const theme = { fg: (_color: string, text: string) => text };
+		const component = (factory as (t: unknown, th: unknown, kb: unknown, done: unknown) => { render: (w: number) => string[] })(tui, theme, {}, () => {});
+		const lines = component.render(92);
+		sawRichRender = Array.isArray(lines) && lines.length > 0;
+		return {
+			questions: [{ id: question.id, question: question.question, options: question.options }],
+			answers: [{ id: question.id, question: question.question, answer: "B", wasCustom: false }],
+			cancelled: false,
+			auditorEnabled: true,
+		};
+	}) as typeof h.ctx.ui.custom;
+	const result = await runGoalQuestionnaire(h.ctx, [question]);
+	assert.equal(sawRichRender, true, "the rich dialog component must render lines");
+	assert.equal(h.dialogs.length, 0, "no per-question dialog may be used when the rich dialog renders");
+	assert.equal(result.answers[0]?.answer, "B");
+});
+
+test("a host that advertises custom but throws surfaces the error instead of degrading", async () => {
 	const h = host([1]);
+	h.ctx.ui.custom = (async () => { throw new Error("host cannot render TUI dialogs"); }) as typeof h.ctx.ui.custom;
+	await assert.rejects(() => runGoalQuestionnaire(h.ctx, [question]), /host cannot render TUI dialogs/);
+	assert.equal(h.dialogs.length, 0, "a broken host must not silently switch to per-question dialogs");
+});
+
+test("per-question dialogs still preserve recommendation labels when custom is absent", async () => {
+	const h = host([1]);
+	delete (h.ctx.ui as Partial<ExtensionContext["ui"]>).custom;
 	const result = await runGoalQuestionnaire(h.ctx, [question]);
 	assert.equal(result.answers[0]?.answer, "B");
 	assert.deepEqual(h.dialogs[0], { title: "Scope?\n\nAll the details", options: ["1. A", "2. B (Recommended)", "3. Write your own answer..."] });
