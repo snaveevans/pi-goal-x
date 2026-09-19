@@ -496,28 +496,35 @@ export function createGoalCore(
 		state.goal = next;
 		persist(ctx);
 
-		// F6: threshold alerts at 50/75/90% — one ledger event + notification each.
+		// F6: threshold alerts at 50/75/90% — at most one ledger event + notification
+		// per accounting update, even when a single charge crosses several
+		// thresholds; all crossed thresholds are marked fired so they do not
+		// re-alert on later updates.
 		const budgetGoal = state.goal;
 		if (budgetGoal && budgetGoal.status === "active" && typeof budgetGoal.tokenBudget === "number" && budgetGoal.tokenBudget > 0 && budgetGoal.usage.tokensUsed > 0) {
 			const pct = budgetGoal.usage.tokensUsed / budgetGoal.tokenBudget;
+			let newlyCrossed = false;
 			for (const threshold of [0.5, 0.75, 0.9]) {
-				const key = `${budgetGoal.id}:${threshold}`;
+				const key = `${budgetGoal.id}:${budgetGoal.tokenBudget}:${threshold}`;
 				if (!budgetWarningsFired.has(key) && pct >= threshold) {
 					budgetWarningsFired.add(key);
-					try {
-						goalService.appendEvents(ctx, [{
-							type: "goal_budget_warning",
-							goalId: budgetGoal.id,
-							budget: budgetGoal.tokenBudget,
-							tokensUsed: budgetGoal.usage.tokensUsed,
-							pct: Math.round(pct * 100),
-							at: nowIso(),
-						}]);
-					} catch {
-						// Alert must never crash the turn.
-					}
-					ctx.ui.notify(`Token budget ${Math.round(pct * 100)}% used (${budgetGoal.usage.tokensUsed}/${budgetGoal.tokenBudget} tokens) — consider raising or trimming scope before the limit.`, "warning");
+					newlyCrossed = true;
 				}
+			}
+			if (newlyCrossed) {
+				try {
+					goalService.appendEvents(ctx, [{
+						type: "goal_budget_warning",
+						goalId: budgetGoal.id,
+						budget: budgetGoal.tokenBudget,
+						tokensUsed: budgetGoal.usage.tokensUsed,
+						pct: Math.round(pct * 100),
+						at: nowIso(),
+					}]);
+				} catch {
+					// Alert must never crash the turn.
+				}
+				ctx.ui.notify(`Token budget ${Math.round(pct * 100)}% used (${budgetGoal.usage.tokensUsed}/${budgetGoal.tokenBudget} tokens) — consider raising or trimming scope before the limit.`, "warning");
 			}
 		}
 
@@ -606,7 +613,7 @@ export function createGoalCore(
 
 	let lastGoalActivityAt = Date.now();
 	let stallNotified = false;
-	const budgetWarningsFired = new Set<string>(); // "goalId:threshold"
+	const budgetWarningsFired = new Set<string>(); // "goalId:budget:threshold" — budget in the key resets warnings when the budget changes
 
 	function touchGoalActivity(): void {
 		lastGoalActivityAt = Date.now();

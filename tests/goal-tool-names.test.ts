@@ -15,13 +15,14 @@ import {
 	PROPOSE_DRAFT_TOOL_NAME,
 	QUESTIONNAIRE_TOOL_NAME,
 	QUESTION_TOOL_NAME,
+	SET_GOAL_BUDGET_TOOL_NAME,
 	SET_GOAL_TASKS_TOOL_NAME,
 	TASK_TOOL_NAMES,
 	UPDATE_GOAL_TASK_TOOL_NAME,
 	UPDATE_GOAL_TOOL_NAME,
 } from "../extensions/goal-tool-names.ts";
 
-const CORE = ["create_goal", "get_goal", "update_goal"];
+const CORE = ["create_goal", "get_goal", "set_goal_budget", "update_goal"];
 
 // Drafting tools belong to the separate transient user-started draft profile,
 // never to the steady three/five execution surface.
@@ -33,23 +34,24 @@ const REMOVED_STEADY = [
 	"complete_task", "skip_task", "complete_goal", "pause_goal",
 ];
 
-test("the five public tool names are preserved", () => {
+test("the six public tool names are preserved", () => {
 	assert.equal(CREATE_GOAL_TOOL_NAME, "create_goal");
 	assert.equal(GET_GOAL_TOOL_NAME, "get_goal");
 	assert.equal(UPDATE_GOAL_TOOL_NAME, "update_goal");
+	assert.equal(SET_GOAL_BUDGET_TOOL_NAME, "set_goal_budget");
 	assert.equal(SET_GOAL_TASKS_TOOL_NAME, "set_goal_tasks");
 	assert.equal(UPDATE_GOAL_TASK_TOOL_NAME, "update_goal_task");
 });
 
-test("fixed profiles: core three, task two, all five registered", () => {
+test("fixed profiles: core four, task two, all six registered", () => {
 	assert.deepEqual(CORE_GOAL_TOOL_NAMES, CORE);
 	assert.deepEqual(TASK_TOOL_NAMES, ["set_goal_tasks", "update_goal_task"]);
 	assert.deepEqual(FIVE_GOAL_TOOLS, [...CORE, ...TASK_TOOL_NAMES]);
 	assert.deepEqual(CORE_GOAL_TOOLS, CORE);
 	assert.deepEqual(DRAFTING_GOAL_TOOLS, DRAFTING);
-	// The registry is the fixed five plus the transient drafting profile; the
-	// INSTALLED profile (installGoalToolProfile) still only ever installs the
-	// three/five execution set.
+	// The registry is the fixed execution set plus the transient drafting
+	// profile; the INSTALLED profile (installGoalToolProfile) still only ever
+	// installs the execution set.
 	assert.deepEqual(ALL_REGISTERED_GOAL_TOOLS, [...FIVE_GOAL_TOOLS, ...DRAFTING_GOAL_TOOLS]);
 });
 

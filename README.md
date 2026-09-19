@@ -103,11 +103,22 @@ A project can have several open goals, with one focused goal per session. Switch
 | `/goal-tweak <change>` | Revise the current goal with the agent. |
 | `/goal-pause` | Pause work on the focused goal. |
 | `/goal-resume` | Resume a paused or blocked goal. |
+| `/goal-budget <tokens\|none>` | Set or remove the focused goal's token budget. Does not resume the goal. |
 | `/goal-clear` | Archive the focused goal after confirmation. |
 | `/goal-cancel` | Cancel an unconfirmed draft. |
 | `/goal-settings` | Configure goal behaviour and the auditor. |
 
 For troubleshooting, use `/goal-status verbose` for more detail, `/goal-status health` or `/goal-recovery` to check for problems, and `/goal-refresh` to reload saved goals and settings after external changes. `/goal-recovery repair` offers repairs after confirmation.
+
+### Token budgets
+
+A token budget is optional and is only set when explicitly requested. Every creation confirmation states the effective budget prominently (`Budget: none` or `Budget: <n> tokens`), so an accidental limit cannot hide behind a successful creation message.
+
+Change the focused goal's budget with `/goal-budget <tokens>` or remove it with `/goal-budget none`; agents can do the same with the `set_goal_budget` tool (passing `token_budget: null` removes the budget) only when the user explicitly asks. Setting or removing a budget preserves the goal's identity, objective, tasks, evidence, and accumulated usage, and never resumes work on its own.
+
+When accounted usage reaches the budget, the goal becomes `budget_limited` and `/goal-resume` refuses while the limit remains exhausted. To recover, remove the budget (`/goal-budget none`) or raise it above current usage; the goal then becomes paused, and you decide whether to continue it with `/goal-resume`.
+
+**Provider note (`openai-responses`):** some Responses-compatible endpoints normalize function tools into strict mode when the tool's `strict` field is omitted, which makes optional arguments effectively required at the model boundary (for example, an unrequested `token_budget: 1`). If you see optional goal-tool arguments being invented, set `compat.supportsStrictMode: true` on the affected model in `models.json`: Pi then serializes an explicit `strict: false` opt-out for ordinary tools. This flag does not request strict sampling.
 
 ## Settings
 

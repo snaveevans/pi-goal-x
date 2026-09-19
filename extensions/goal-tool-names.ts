@@ -2,22 +2,23 @@ import type { GoalRecord } from "./goal-record.ts";
 export const CREATE_GOAL_TOOL_NAME = "create_goal";
 export const GET_GOAL_TOOL_NAME = "get_goal";
 export const UPDATE_GOAL_TOOL_NAME = "update_goal";
+export const SET_GOAL_BUDGET_TOOL_NAME = "set_goal_budget";
 export const SET_GOAL_TASKS_TOOL_NAME = "set_goal_tasks";
 export const UPDATE_GOAL_TASK_TOOL_NAME = "update_goal_task";
 export const QUESTION_TOOL_NAME = "goal_question";
 export const QUESTIONNAIRE_TOOL_NAME = "goal_questionnaire";
 export const PROPOSE_DRAFT_TOOL_NAME = "propose_goal_draft";
 
-/** The stable core model surface: three tools, installed without phase-dependent sync. */
-export const CORE_GOAL_TOOL_NAMES = [CREATE_GOAL_TOOL_NAME, GET_GOAL_TOOL_NAME, UPDATE_GOAL_TOOL_NAME] as const;
+/** The stable core model surface: four tools, installed without phase-dependent sync. */
+export const CORE_GOAL_TOOL_NAMES = [CREATE_GOAL_TOOL_NAME, GET_GOAL_TOOL_NAME, SET_GOAL_BUDGET_TOOL_NAME, UPDATE_GOAL_TOOL_NAME] as const;
 
 /** The two consolidated task tools advertised when tasks are enabled. */
 export const TASK_TOOL_NAMES = [SET_GOAL_TASKS_TOOL_NAME, UPDATE_GOAL_TASK_TOOL_NAME] as const;
 
-/** Fixed task-enabled profile: all five registered goal tools. */
+/** Fixed task-enabled profile: the core tools plus both task tools. */
 export const FIVE_GOAL_TOOLS = [...CORE_GOAL_TOOL_NAMES, ...TASK_TOOL_NAMES] as const;
 
-/** Fixed task-disabled profile: the three core tools. */
+/** Fixed task-disabled profile: the core tools. */
 export const CORE_GOAL_TOOLS = CORE_GOAL_TOOL_NAMES;
 
 /** User-started drafting uses a separate transient model profile. */
@@ -40,6 +41,7 @@ export const GOAL_WORK_TOOL_NAMES = [
 	UPDATE_GOAL_TOOL_NAME,
 	SET_GOAL_TASKS_TOOL_NAME,
 	UPDATE_GOAL_TASK_TOOL_NAME,
+	SET_GOAL_BUDGET_TOOL_NAME,
 	CREATE_GOAL_TOOL_NAME,
 	GET_GOAL_TOOL_NAME,
 	"write",
@@ -74,7 +76,7 @@ export const POST_STOP_ALLOWED_TOOLS = ["get_goal"] as const;
 export function applicableGoalTools(goal: GoalRecord | null, tasksEnabled: boolean): string[] {
  const names: string[] = [CREATE_GOAL_TOOL_NAME, GET_GOAL_TOOL_NAME];
  if (!goal) return names;
- if (["active", "paused", "budget_limited"].includes(goal.status)) names.push(UPDATE_GOAL_TOOL_NAME);
+ if (["active", "paused", "budget_limited"].includes(goal.status)) names.push(SET_GOAL_BUDGET_TOOL_NAME, UPDATE_GOAL_TOOL_NAME);
  if (tasksEnabled && ["active", "paused"].includes(goal.status)) names.push(SET_GOAL_TASKS_TOOL_NAME);
  if (tasksEnabled && goal.status === "active" && goal.taskList?.tasks.length) names.push(UPDATE_GOAL_TASK_TOOL_NAME);
  return names;

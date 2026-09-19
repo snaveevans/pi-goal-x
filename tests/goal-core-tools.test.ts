@@ -128,7 +128,7 @@ async function start(h: ReturnType<typeof createHarness>): Promise<void> {
 
 // ── Tool surface ─────────────────────────────────────────────────────────────
 
-test("exactly three goal tools are advertised when tasks are disabled", async () => {
+test("exactly the core goal tools are advertised when tasks are disabled", async () => {
 	const cwd = mkdtempSync(path.join(tmpdir(), "goal-core-notasks-"));
 	mkdirSync(path.join(cwd, ".pi", "goals", "archived"), { recursive: true });
 	writeFileSync(path.join(cwd, ".pi", "pi-goal-x-settings.json"), JSON.stringify({ disableTasks: true }));
@@ -140,7 +140,7 @@ test("exactly three goal tools are advertised when tasks are disabled", async ()
 			sessionEntries: [{ type: "custom", customType: "pi-goal-focus", data: goalFocusDetails(goal.id, "created") }],
 		});
 		await start(h);
-		for (const present of ["create_goal", "get_goal", "update_goal"]) {
+		for (const present of ["create_goal", "get_goal", "set_goal_budget", "update_goal"]) {
 			assert.ok(h.activeTools.includes(present), `${present} must be advertised`);
 		}
 		for (const absent of [
@@ -626,6 +626,198 @@ test("focus changed while audit runs cancels completion without modifying the go
 		assert.equal(activeGoalFiles(f.cwd).length, 1, "goal must remain open and unmodified");
 		const events = ledgerEvents(f.cwd);
 		assert.equal(events.some((e) => e.type === "audit_result"), false, "no audit result when focus changed during audit");
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("create_goal reports Budget: none when no budget is supplied", async () => {
+	const cwd = mkdtempSync(path.join(tmpdir(), "goal-core-nobudget-report-"));
+	mkdirSync(path.join(cwd, ".pi", "goals", "archived"), { recursive: true });
+	try {
+		const h = createHarness({ cwd, sessionEntries: [] });
+		await start(h);
+		const create = h.tools.get("create_goal")!;
+		const result = await (create.execute as any)("create-nb", {
+			objective: "=== Goal ===\nObjective: Unbudgeted",
+		}, undefined, undefined, h.ctx);
+		const text = result.content?.[0]?.text ?? "";
+		assert.ok(text.includes("Budget: none"), `report must state Budget: none, got: ${text.slice(0, 120)}`);
+		const active = activeGoalFiles(cwd);
+		assert.equal(active.length, 1);
+		const parsed = parseGoalFile(path.join(cwd, ".pi", "goals", active[0]!));
+		assert.ok(parsed);
+		assert.equal(parsed.tokenBudget, undefined, "a budget-free create must persist no budget");
+	} finally {
+		try { rmSync(cwd, { recursive: true, force: true }); } catch {}
+	}
+});
+
+test("create_goal reports the persisted one-token budget verbatim", async () => {
+	const cwd = mkdtempSync(path.join(tmpdir(), "goal-core-onebudget-report-"));
+	mkdirSync(path.join(cwd, ".pi", "goals", "archived"), { recursive: true });
+	try {
+		const h = createHarness({ cwd, sessionEntries: [] });
+		await start(h);
+		const create = h.tools.get("create_goal")!;
+		const result = await (create.execute as any)("create-1tok", {
+			objective: "=== Goal ===\nObjective: Accidental one-token budget",
+			token_budget: 1,
+		}, undefined, undefined, h.ctx);
+		const text = result.content?.[0]?.text ?? "";
+		assert.ok(text.includes("Budget: 1 tokens"), `report must expose the 1-token budget, got: ${text.slice(0, 120)}`);
+	} finally {
+		try { rmSync(cwd, { recursive: true, force: true }); } catch {}
+	}
+});
+
+// ── set_goal_budget ────────────────────────────────────────────────────────
+
+test("set_goal_budget requires an explicit token_budget argument", async () => {
+	const f = makeFixture();
+	try {
+		const h = createHarness({ cwd: f.cwd, sessionEntries: f.sessionEntries });
+		await start(h);
+		const tool = h.tools.get("set_goal_budget")!;
+		assert.ok(tool, "set_goal_budget must be registered");
+		const required = (tool.parameters as { required?: string[] }).required ?? [];
+		assert.deepEqual(required, ["token_budget"], "token_budget must be required so omission cannot silently remove the budget");
+		const schema = JSON.stringify(tool.parameters);
+		assert.ok(schema.includes('"type":"null"'), `token_budget must accept explicit null, got: ${schema}`);
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("set_goal_budget sets and removes the persisted budget with a ledger event", async () => {
+	const f = makeFixture();
+	try {
+		const h = createHarness({ cwd: f.cwd, sessionEntries: f.sessionEntries });
+		await start(h);
+		const tool = h.tools.get("set_goal_budget")!;
+
+		const setResult = await (tool.execute as any)("sb-1", { token_budget: 5000 }, undefined, undefined, h.ctx);
+		assert.ok((setResult.content?.[0]?.text ?? "").includes("set to 5000"));
+		let disk = parseGoalFile(path.join(f.cwd, f.goal.activePath!));
+		assert.equal(disk?.tokenBudget, 5000, "budget must persist to disk");
+		assert.equal(disk?.status, "active", "setting a budget must not change status");
+
+		const removeResult = await (tool.execute as any)("sb-2", { token_budget: null }, undefined, undefined, h.ctx);
+		assert.ok((removeResult.content?.[0]?.text ?? "").includes("removed"));
+		disk = parseGoalFile(path.join(f.cwd, f.goal.activePath!));
+		assert.equal(disk?.tokenBudget, undefined, "removal must persist to disk");
+
+		const events = ledgerEvents(f.cwd).filter((e) => e.type === "goal_budget_changed");
+		assert.equal(events.length, 2, "one ledger event per budget change");
+		assert.equal(events[0]!.newBudget, 5000);
+		assert.equal(events[1]!.oldBudget, 5000);
+		assert.equal(events[1]!.newBudget, undefined, "removed budget is recorded as absent");
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("set_goal_budget rejects invalid values without mutating the goal", async () => {
+	const f = makeFixture({ tokenBudget: 250 });
+	try {
+		const h = createHarness({ cwd: f.cwd, sessionEntries: f.sessionEntries });
+		await start(h);
+		const tool = h.tools.get("set_goal_budget")!;
+		for (const bad of [0, -5, 2.5, Number.MAX_SAFE_INTEGER + 1]) {
+			const result = await (tool.execute as any)("sb-bad", { token_budget: bad }, undefined, undefined, h.ctx);
+			assert.ok((result.content?.[0]?.text ?? "").includes("token_budget"), `must reject ${bad}`);
+		}
+		const disk = parseGoalFile(path.join(f.cwd, f.goal.activePath!));
+		assert.equal(disk?.tokenBudget, 250, "rejected updates must leave the budget unchanged");
+		assert.equal(ledgerEvents(f.cwd).filter((e) => e.type === "goal_budget_changed").length, 0);
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("set_goal_budget recovers a budget_limited goal to paused without resuming it", async () => {
+	const cwd = mkdtempSync(path.join(tmpdir(), "goal-core-recover-"));
+	mkdirSync(path.join(cwd, ".pi", "goals", "archived"), { recursive: true });
+	const goal = createGoal({ objective: "=== Goal ===\nObjective: Recover me", autoContinue: true, sisyphus: false }, Date.UTC(2026, 7, 4, 12, 0, 0));
+	goal.tokenBudget = 100;
+	goal.usage.tokensUsed = 110;
+	goal.status = "budget_limited";
+	goal.autoContinue = false;
+	const written = writeActiveGoalFile({ cwd }, goal);
+	const sessionEntries = [{ type: "custom", customType: "pi-goal-focus", data: goalFocusDetails(goal.id, "created") }];
+	try {
+		const h = createHarness({ cwd, sessionEntries });
+		await start(h);
+		const tool = h.tools.get("set_goal_budget")!;
+		const result = await (tool.execute as any)("sb-recover", { token_budget: null }, undefined, undefined, h.ctx);
+		const text = result.content?.[0]?.text ?? "";
+		assert.ok(text.includes("removed"), text);
+		assert.ok(text.includes("Status: paused"), `recovered goal must be paused, got: ${text}`);
+		assert.ok(text.includes("/goal-resume"), "the response must direct the user to resume explicitly");
+		const disk = parseGoalFile(path.join(cwd, written.activePath!));
+		assert.ok(disk, "goal file must still parse");
+		assert.equal(disk.id, goal.id, "goal identity is preserved");
+		assert.ok(disk.objective.includes("Recover me"), "objective is preserved");
+		assert.equal(disk.tokenBudget, undefined);
+		assert.equal(disk.status, "paused", "recovery lands on paused, never auto-resumed");
+		assert.equal(disk.autoContinue, false);
+		assert.equal(disk.usage.tokensUsed, 110, "usage history is preserved");
+		const events = ledgerEvents(cwd).filter((e) => e.type === "goal_budget_changed");
+		assert.equal(events.length, 1);
+		assert.equal(events[0]!.oldBudget, 100);
+		assert.equal(events[0]!.tokensUsed, 110);
+	} finally {
+		try { rmSync(cwd, { recursive: true, force: true }); } catch {}
+	}
+});
+
+test("set_goal_budget keeps a budget_limited goal limited when the new budget is still exhausted", async () => {
+	const cwd = mkdtempSync(path.join(tmpdir(), "goal-core-stilllimited-"));
+	mkdirSync(path.join(cwd, ".pi", "goals", "archived"), { recursive: true });
+	const goal = createGoal({ objective: "=== Goal ===\nObjective: Still limited", autoContinue: true, sisyphus: false }, Date.UTC(2026, 7, 4, 12, 30, 0));
+	goal.tokenBudget = 100;
+	goal.usage.tokensUsed = 110;
+	goal.status = "budget_limited";
+	goal.autoContinue = false;
+	const written = writeActiveGoalFile({ cwd }, goal);
+	const sessionEntries = [{ type: "custom", customType: "pi-goal-focus", data: goalFocusDetails(goal.id, "created") }];
+	try {
+		const h = createHarness({ cwd, sessionEntries });
+		await start(h);
+		const tool = h.tools.get("set_goal_budget")!;
+		await (tool.execute as any)("sb-still", { token_budget: 50 }, undefined, undefined, h.ctx);
+		const disk = parseGoalFile(path.join(cwd, written.activePath!));
+		assert.equal(disk?.tokenBudget, 50);
+		assert.equal(disk?.status, "budget_limited", "a still-exhausted budget must not unpause the goal");
+	} finally {
+		try { rmSync(cwd, { recursive: true, force: true }); } catch {}
+	}
+});
+
+test("set_goal_budget refuses goals that cannot be mutated", async () => {
+	const cwd = mkdtempSync(path.join(tmpdir(), "goal-core-nogoal-"));
+	mkdirSync(path.join(cwd, ".pi", "goals", "archived"), { recursive: true });
+	try {
+		const h = createHarness({ cwd, sessionEntries: [] });
+		await start(h);
+		const tool = h.tools.get("set_goal_budget")!;
+		const noGoal = await (tool.execute as any)("sb-none", { token_budget: 1000 }, undefined, undefined, h.ctx);
+		assert.ok((noGoal.content?.[0]?.text ?? "").includes("No focused goal"));
+	} finally {
+		try { rmSync(cwd, { recursive: true, force: true }); } catch {}
+	}
+	// A complete goal is archived/unfocused during load, so the refusal lands on
+	// a protective path either way; what must never happen is a successful
+	// mutation or a false success message.
+	const f = makeFixture({ status: "complete" });
+	try {
+		const h = createHarness({ cwd: f.cwd, sessionEntries: f.sessionEntries });
+		await start(h);
+		const tool = h.tools.get("set_goal_budget")!;
+		const completed = await (tool.execute as any)("sb-complete", { token_budget: 1000 }, undefined, undefined, h.ctx);
+		const text = completed.content?.[0]?.text ?? "";
+		assert.ok(/No focused goal|completed/.test(text), `must refuse, got: ${text.slice(0, 120)}`);
+		assert.equal(ledgerEvents(f.cwd).filter((e) => e.type === "goal_budget_changed").length, 0, "no ledger event for a refused update");
 	} finally {
 		f.cleanup();
 	}

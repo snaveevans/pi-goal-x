@@ -135,7 +135,7 @@ try {
 	if (child) {
 		assert.equal(core, undefined);
 		assert.equal(calls.length, 1, 'one assignment must produce exactly one request');
-		assert.ok(!session.getActiveToolNames().some(name => ['create_goal', 'get_goal', 'update_goal', 'set_goal_tasks', 'update_goal_task'].includes(name)));
+		assert.ok(!session.getActiveToolNames().some(name => ['create_goal', 'get_goal', 'set_goal_budget', 'update_goal', 'set_goal_tasks', 'update_goal_task'].includes(name)));
 		assert.ok(!JSON.stringify(calls).includes('pi_goal_continuation'));
 		assert.ok(!JSON.stringify(calls).includes('PI GOAL UNFOCUSED'));
 		assert.equal(session.messages.at(-1).content[0].text, 'Assignment finished.');

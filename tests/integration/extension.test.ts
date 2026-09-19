@@ -102,8 +102,8 @@ async function start(h: Harness): Promise<void> {
 }
 
 const HOST_TOOLS = ["read", "bash", "edit", "write"];
-const FIVE = ["create_goal", "get_goal", "update_goal", "set_goal_tasks", "update_goal_task"];
-const THREE = ["create_goal", "get_goal", "update_goal"];
+const FIVE = ["create_goal", "get_goal", "set_goal_budget", "update_goal", "set_goal_tasks", "update_goal_task"];
+const THREE = ["create_goal", "get_goal", "set_goal_budget", "update_goal"];
 
 /** The installed profile (from captured setActiveTools calls) contains these names. */
 function installedProfileContains(history: string[][], names: string[]): boolean {

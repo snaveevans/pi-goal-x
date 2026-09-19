@@ -11,10 +11,10 @@ import assert from "node:assert/strict";
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import goalExtension from "../extensions/goal.ts";
-import { parseGoalFile } from "../extensions/storage/goal-files.ts";
+import { parseGoalFile, writeActiveGoalFile } from "../extensions/storage/goal-files.ts";
 
 const CURATED_COMMANDS = [
-	"goal", "sisyphus", "goal-direct", "sisyphus-direct", "goal-tweak", "goal-pause", "goal-resume",
+	"goal", "sisyphus", "goal-direct", "sisyphus-direct", "goal-tweak", "goal-pause", "goal-resume", "goal-budget",
 	"goal-clear", "goal-list", "goal-status", "goal-refresh", "goal-recovery", "goal-focus", "goal-unfocus", "goal-settings", "goal-cancel",
 ];
 
@@ -74,7 +74,7 @@ function activeGoalFiles(cwd: string): string[] {
 	}
 }
 
-test("exactly the fourteen curated commands are registered; legacy commands are absent", () => {
+test("exactly the curated commands are registered; legacy commands are absent", () => {
 	const cwd = mkdtempSync(path.join(tmpdir(), "goal-palette-"));
 	try {
 		const h = createHarness(cwd);
@@ -101,6 +101,78 @@ test("/goal <objective> starts guided drafting without creating a goal", async (
 		assert.equal(files.length, 0, "drafting does not create before confirmation");
 		assert.ok(h.messages.some((message) => message.includes("GOAL CONFIRMATION")), "drafting prompt sent to agent");
 		assert.deepEqual(h.getActiveTools().filter((name) => name.startsWith("goal_") || name === "propose_goal_draft"), ["goal_question", "goal_questionnaire", "propose_goal_draft"]);
+	} finally {
+		try { rmSync(cwd, { recursive: true, force: true }); } catch {}
+	}
+});
+
+test("/goal-budget rejects invalid arguments and never creates a goal", async () => {
+	const cwd = mkdtempSync(path.join(tmpdir(), "goal-palette-budget-args-"));
+	mkdirSync(path.join(cwd, ".pi", "goals", "archived"), { recursive: true });
+	try {
+		const h = createHarness(cwd);
+		await h.handlers.get("session_start")?.({ reason: "start" }, h.ctx);
+		for (const bad of ["", "100 200", "12x", "0", "-3", "2.5"]) {
+			await h.commands.get("goal-budget")!.handler(bad, h.ctx);
+		}
+		const notices = h.notifications.join("\n");
+		assert.ok(notices.includes("No focused goal") || notices.includes("Usage: /goal-budget") || notices.includes("Invalid budget"), `must refuse invalid input, got: ${notices.slice(0, 200)}`);
+		assert.equal(activeGoalFiles(cwd).length, 0, "no goal may be created");
+	} finally {
+		try { rmSync(cwd, { recursive: true, force: true }); } catch {}
+	}
+});
+
+test("/goal-budget sets and removes the focused goal's persisted budget", async () => {
+	const cwd = mkdtempSync(path.join(tmpdir(), "goal-palette-budget-"));
+	mkdirSync(path.join(cwd, ".pi", "goals", "archived"), { recursive: true });
+	try {
+		const h = createHarness(cwd);
+		await h.handlers.get("session_start")?.({ reason: "start" }, h.ctx);
+		await h.commands.get("goal-direct")!.handler("Budget command coverage", h.ctx);
+		const active = activeGoalFiles(cwd);
+		assert.equal(active.length, 1, "direct creation produced the focused goal");
+		const goalFile = path.join(cwd, ".pi", "goals", active[0]!);
+
+		await h.commands.get("goal-budget")!.handler("750", h.ctx);
+		let parsed = parseGoalFile(goalFile);
+		assert.equal(parsed?.tokenBudget, 750, "budget set persists to disk");
+		assert.ok(h.notifications.some((n) => n.includes("set to 750")), "set notification");
+
+		await h.commands.get("goal-budget")!.handler("none", h.ctx);
+		parsed = parseGoalFile(goalFile);
+		assert.equal(parsed?.tokenBudget, undefined, "budget removal persists to disk");
+		assert.ok(parsed?.objective.includes("Budget command coverage"), "objective preserved");
+		assert.ok(h.notifications.some((n) => n.includes("removed")), "removal notification");
+	} finally {
+		try { rmSync(cwd, { recursive: true, force: true }); } catch {}
+	}
+});
+
+test("/goal-budget recovers a budget_limited goal to paused, never resumed", async () => {
+	const cwd = mkdtempSync(path.join(tmpdir(), "goal-palette-budget-limited-"));
+	mkdirSync(path.join(cwd, ".pi", "goals", "archived"), { recursive: true });
+	try {
+		const h = createHarness(cwd);
+		await h.handlers.get("session_start")?.({ reason: "start" }, h.ctx);
+		await h.commands.get("goal-direct")!.handler("Budget-limited recovery", h.ctx);
+		const active = activeGoalFiles(cwd);
+		assert.equal(active.length, 1);
+		const goalFile = path.join(cwd, ".pi", "goals", active[0]!);
+		const goal = parseGoalFile(goalFile);
+		assert.ok(goal);
+		// Drive the goal into budget_limited on disk, then re-read it.
+		writeActiveGoalFile({ cwd }, { ...goal, tokenBudget: 100, usage: { ...goal.usage, tokensUsed: 120 }, status: "budget_limited", autoContinue: false });
+		await h.commands.get("goal-refresh")!.handler("", h.ctx);
+
+		await h.commands.get("goal-budget")!.handler("none", h.ctx);
+		const parsed = parseGoalFile(goalFile);
+		assert.equal(parsed?.tokenBudget, undefined);
+		assert.equal(parsed?.status, "paused", "recovery lands on paused");
+		assert.equal(parsed?.autoContinue, false, "recovery must not renew autonomous work");
+		assert.equal(parsed?.usage.tokensUsed, 120, "usage history preserved");
+		assert.ok(parsed?.objective.includes("Budget-limited recovery"), "objective preserved");
+		assert.ok(h.notifications.some((n) => n.includes("Status: paused") && n.includes("/goal-resume")), "notification explains the explicit resume path");
 	} finally {
 		try { rmSync(cwd, { recursive: true, force: true }); } catch {}
 	}

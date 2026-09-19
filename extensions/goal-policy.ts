@@ -310,14 +310,13 @@ export function buildGoalCreatedReport(args: GoalCreatedReportArgs): string {
 	const opening = args.confirmed
 		? ["✓ Goal created and focused.", "Continuing automatically with the confirmed plan."]
 		: ["Goal confirmed and created."];
-	const lines = [...opening, "", "Finalized goal:", "", args.objective.trim()];
+	const lines = [...opening, `Budget: ${args.tokenBudget === undefined ? "none" : `${args.tokenBudget} tokens`}`, "", "Finalized goal:", "", args.objective.trim()];
 	const details: string[] = [];
 	if (args.goalId) details.push(`Goal id: ${args.goalId}`);
 	if (args.filePath) details.push(`File: ${args.filePath}`);
 	if (args.taskCount !== undefined) details.push(`Tasks: ${args.taskCount}`);
 	if (args.verificationContract?.trim()) details.push(`Verification: ${args.verificationContract.trim()}`);
 	if (args.auditorEnabled !== undefined) details.push(`Auditor: ${args.auditorEnabled ? "enabled" : "disabled"}`);
-	if (args.tokenBudget !== undefined) details.push(`Token budget: ${args.tokenBudget}`);
 	const summary = args.detailedSummary?.trim();
 	if (summary) details.push(summary);
 	if (details.length > 0) {

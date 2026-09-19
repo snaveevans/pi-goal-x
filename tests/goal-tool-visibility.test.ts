@@ -67,8 +67,8 @@ function testFixture() {
 }
 
 // Fixed profiles (Stage 2). Lifecycle state never changes these.
-const FIVE_GOAL_TOOLS = ["create_goal", "get_goal", "update_goal", "set_goal_tasks", "update_goal_task"];
-const CORE_GOAL_TOOLS = ["create_goal", "get_goal", "update_goal"];
+const FIVE_GOAL_TOOLS = ["create_goal", "get_goal", "set_goal_budget", "update_goal", "set_goal_tasks", "update_goal_task"];
+const CORE_GOAL_TOOLS = ["create_goal", "get_goal", "set_goal_budget", "update_goal"];
 const BASE = ["create_goal", "get_goal"];
 const ACTIVE_NO_TASKS = [...CORE_GOAL_TOOLS, "set_goal_tasks"];
 
@@ -135,7 +135,7 @@ describe("Applicable tool profiles", () => {
 	}
 
 	// ── Fixed profile across every lifecycle state ─────────────────────────
-	it("active goal without tasks advertises four operations and host tools are untouched", async () => {
+	it("active goal without tasks advertises the core operations plus set_goal_tasks, and host tools are untouched", async () => {
 		const f = testFixture();
 		try {
 			activeToolNames = [...HOST_SEED_A];

@@ -301,11 +301,43 @@ describe("F6 token-budget threshold alerts", () => {
 			h.core.accountProgress(h.ctx as never, { completedTurnTokens: 20000 }); // 100% → 90% warning + budget_limited
 			const ledger = ledgerText(cwd);
 			const warnings = (ledger.match(/"type":"goal_budget_warning"/g) ?? []).length;
-			assert.equal(warnings, 3, "one warning per crossed threshold (50/75/90)");
+			assert.equal(warnings, 3, "one warning per accounting update that crosses a threshold");
 			assert.match(ledger, /"pct":60/); // first charge crossed 50%
 			assert.match(ledger, /"pct":80/); // second crossed 75%
 			assert.match(ledger, /"pct":100/); // third crossed 90%
 			assert.match(ledger, /goal_budget_limited/);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("coalesces a single charge crossing several thresholds into one warning", async () => {
+		const cwd = fixtureCwd();
+		try {
+			const goal = writeActiveGoalFile({ cwd }, makeGoal({ objective: "F6 coalesce", budget: 100000 }));
+			const h = coreHarness(cwd);
+			await h.core.loadState(h.ctx as never);
+			h.core.setFocusedGoalId(goal.id, h.ctx as never, "selected", { recordLedger: false });
+			h.core.beginAccounting();
+			// One charge jumps 0% → 85%, crossing both the 50% and 75% thresholds
+			// in a single accounting update. Issue #59: this must not emit the same
+			// current-percentage notification once per crossed threshold.
+			h.core.accountProgress(h.ctx as never, { completedTurnTokens: 85000 });
+			const budgetNotifies = h.notifies.filter((n) => n.msg.includes("Token budget") && n.level === "warning");
+			assert.equal(budgetNotifies.length, 1, "one notification per accounting update, not per threshold");
+			assert.ok(budgetNotifies[0]!.msg.includes("85%"), `notification shows the current percentage, got: ${budgetNotifies[0]?.msg}`);
+			let warnings = (ledgerText(cwd).match(/"type":"goal_budget_warning"/g) ?? []).length;
+			assert.equal(warnings, 1, "one warning ledger event per accounting update");
+
+			// The crossed thresholds are marked fired: a small follow-up charge
+			// below the next threshold emits nothing more.
+			h.core.accountProgress(h.ctx as never, { completedTurnTokens: 4000 }); // 89%
+			assert.equal(h.notifies.filter((n) => n.msg.includes("Token budget") && n.level === "warning").length, 1, "no repeat alert for already-crossed thresholds");
+
+			// Crossing the next threshold alerts once more, at the new percentage.
+			h.core.accountProgress(h.ctx as never, { completedTurnTokens: 5000 }); // 94% → 90% threshold
+			warnings = (ledgerText(cwd).match(/"type":"goal_budget_warning"/g) ?? []).length;
+			assert.equal(warnings, 2);
 		} finally {
 			rmSync(cwd, { recursive: true, force: true });
 		}

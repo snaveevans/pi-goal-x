@@ -26,7 +26,8 @@ import { invalidateGoalLedgerCache, readGoalLedger } from "./goal-ledger.ts";
 import { buildGoalStatusText } from "./goal-status.ts";
 import { effectiveSettingsReport, invalidateGoalSettingsCache, loadGoalSettingsFileConfig } from "./goal-settings.ts";
 import { invalidateGoalPoolCache, mergeGoalPromptFromDisk, readActiveGoalPool } from "./storage/goal-files.ts";
-import { nowIso, type GoalMode, type GoalRecord } from "./goal-record.ts";
+import { nowIso, validateTokenBudgetInput, type GoalMode, type GoalRecord } from "./goal-record.ts";
+import { setFocusedGoalBudget } from "./goal-budget.ts";
 import { clearGoalDrafting, hasActiveDraft, startGoalDrafting } from "./goal-drafting.ts";
 import { formatRecoveryReport, runRecoveryReport, runRecoveryRepair } from "./goal-recovery.ts";
 import { formatCheckpointHealthReport, readSessionCheckpointHealth } from "./goal-session-health.ts";
@@ -811,4 +812,49 @@ export function registerGoalCommands(core: GoalCore): void {
 			await handleGoalResume(ctx);
 		},
 	});
+	pi.registerCommand("goal-budget", {
+		description: "Set or remove the focused goal's token budget: /goal-budget <tokens|none>. Does not resume the goal.",
+		handler: async (rawArgs, ctx) => {
+			await handleGoalBudget((rawArgs ?? "").trim(), ctx);
+		},
+	});
+
+	async function handleGoalBudget(rawArgs: string, ctx: ExtensionContext): Promise<void> {
+	core.reconcileFocusedGoalFromDisk(ctx);
+	const goal = core.state.goal;
+	if (!goal) {
+		ctx.ui.notify("No focused goal to update.", "warning");
+		return;
+	}
+	if (goal.status === "complete") {
+		ctx.ui.notify("A completed goal's budget cannot be changed.", "warning");
+		return;
+	}
+	const parts = rawArgs.split(/\s+/).filter(Boolean);
+	if (parts.length !== 1) {
+		ctx.ui.notify("Usage: /goal-budget <tokens|none> — one positive whole number, or 'none' to remove the budget.", "info");
+		return;
+	}
+	const arg = parts[0]!;
+	let budget: number | undefined;
+	if (arg === "none") {
+		budget = undefined;
+	} else if (/^\d+$/.test(arg)) {
+		const gate = validateTokenBudgetInput(Number(arg));
+		if (!gate.ok) {
+			ctx.ui.notify(gate.message, "warning");
+			return;
+		}
+		budget = gate.value;
+	} else {
+		ctx.ui.notify(`Invalid budget "${arg}": use a positive whole number or 'none'.`, "warning");
+		return;
+	}
+	const result = setFocusedGoalBudget(core, ctx, budget);
+	if (!result.ok) {
+		ctx.ui.notify(result.message, "error");
+		return;
+	}
+		ctx.ui.notify(result.message, "info");
+	}
 }

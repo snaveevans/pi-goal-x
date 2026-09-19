@@ -16,6 +16,7 @@ import { buildGoalHistoryBlock, buildGoalTaskDetailBlock } from "./goal-format.t
 import { sisyphusStepProgress } from "./goal-policy.ts";
 import { deriveTasksFromObjective } from "./goal-task-derive.ts";
 import { nowIso, type GoalRecord, type GoalTask, validateTokenBudgetInput } from "./goal-record.ts";
+import { setFocusedGoalBudget } from "./goal-budget.ts";
 import type { GoalCore } from "./goal-state.ts";
 import { promptProfile } from "./prompts/goal-prompts.ts";
 import {
@@ -223,7 +224,7 @@ pi.registerTool(defineTool({
 			? `\n\nThe objective contains ${derived.length} ordered step${derived.length === 1 ? "" : "s"}; propose them as the task tree with set_goal_tasks if the user wants tracked milestones.`
 			: "";
 		return {
-			content: [{ type: "text", text: `${buildGoalCreatedReport({ objective: created?.objective ?? objective, detailedSummary: detailedSummary(created) })}${bootstrapLine}${otherLine}` }],
+			content: [{ type: "text", text: `${buildGoalCreatedReport({ objective: created?.objective ?? objective, detailedSummary: detailedSummary(created), tokenBudget: created?.tokenBudget })}${bootstrapLine}${otherLine}` }],
 			details: goalDetails(created),
 			terminate: true,
 		};
@@ -505,6 +506,41 @@ async function runGoalAgentPauseFlow(ctx: ExtensionContext, reason: string | und
 		terminate: false,
 	};
 }
+
+pi.registerTool(defineTool({
+	name: "set_goal_budget",
+	label: "Set Goal Budget",
+	description: "Set or remove the focused goal's whole-token budget only on explicit user request. Pass token_budget null to remove an existing budget. Does not resume or continue the goal.",
+	promptSnippet: "Set or remove the goal token budget only when the user explicitly asks.",
+	promptGuidelines: ["Use set_goal_budget only after the user explicitly asks to set or remove the goal's token budget; pass token_budget null to remove it."],
+	parameters: Type.Object({
+		token_budget: Type.Union([Type.Integer({ minimum: 1, description: "Whole-token budget." }), Type.Null({ description: "Remove the budget." })], { description: "Positive whole-token budget, or null to remove it." }),
+	}, { additionalProperties: false }),
+	executionMode: "sequential",
+	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		const budget = params.token_budget === null ? undefined : params.token_budget;
+		if (budget !== undefined) {
+			// Tool callers are untrusted: re-validate beyond the schema.
+			const budgetGate = validateTokenBudgetInput(budget);
+			if (!budgetGate.ok) return { content: [{ type: "text", text: budgetGate.message }], details: goalDetails(core.state.goal) };
+		}
+		const result = setFocusedGoalBudget(core, ctx, budget);
+		if (!result.ok) {
+			return { content: [{ type: "text", text: result.message }], details: goalDetails(core.state.goal), terminate: false };
+		}
+		return {
+			content: [{ type: "text", text: result.message }],
+			details: goalDetails(result.goal),
+			terminate: true,
+		};
+	},
+	renderCall(args, theme) {
+		return new Text(theme.fg("toolTitle", "set_goal_budget ") + theme.fg("muted", args?.token_budget === null ? "none" : String(args?.token_budget ?? "")), 0, 0);
+	},
+	renderResult(result, _options, theme) {
+		return renderGoalResult(result, _options, theme);
+	},
+}));
 
 pi.registerTool(defineTool({
 	name: "update_goal",

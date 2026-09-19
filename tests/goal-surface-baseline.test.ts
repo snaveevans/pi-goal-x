@@ -65,6 +65,7 @@ function createRecordingPi() {
 const EXPECTED_REGISTERED_TOOLS = [
 	"get_goal",
 	"create_goal",
+	"set_goal_budget",
 	"update_goal",
 	"set_goal_tasks",
 	"update_goal_task",
@@ -97,6 +98,7 @@ const EXPECTED_REGISTERED_COMMANDS = [
 	"goal-clear",
 	"goal-pause",
 	"goal-resume",
+	"goal-budget",
 ] as const;
 
 test("baseline: execution and drafting tools are registered in pinned order", () => {
@@ -106,7 +108,7 @@ test("baseline: execution and drafting tools are registered in pinned order", ()
 	assert.deepEqual(registeredTools, [...EXPECTED_REGISTERED_TOOLS]);
 });
 
-test("baseline: exactly 16 slash commands are registered, in pinned order", () => {
+test("baseline: exactly 17 slash commands are registered, in pinned order", () => {
 	const { pi, registeredCommands } = createRecordingPi();
 	piGoalExtension(pi as never);
 
@@ -121,13 +123,13 @@ test("baseline: no duplicate tool or command registrations", () => {
 	assert.equal(new Set(registeredCommands).size, registeredCommands.length);
 });
 
-test("baseline: execution profiles remain three/five tools and drafting is separate", () => {
+test("baseline: execution profiles remain fixed core/task sets and drafting is separate", () => {
 	assert.deepEqual(FIVE_GOAL_TOOLS, [
-		"create_goal", "get_goal", "update_goal",
+		"create_goal", "get_goal", "set_goal_budget", "update_goal",
 		"set_goal_tasks", "update_goal_task",
 	]);
 	assert.deepEqual(CORE_GOAL_TOOLS, [
-		"create_goal", "get_goal", "update_goal",
+		"create_goal", "get_goal", "set_goal_budget", "update_goal",
 	]);
 	assert.deepEqual(DRAFTING_GOAL_TOOLS, [
 		"goal_question", "goal_questionnaire", "propose_goal_draft",
