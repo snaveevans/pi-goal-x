@@ -365,6 +365,10 @@ export function registerGoalEvents(core: GoalCore): void {
 		const getPromptLedger = () => promptLedger ??= { events: core.state.goal ? goalRuntimeEvents(ctx, core.state.goal.id) : [], malformed: 0 };
 
 		if (!core.state.goal) {
+			// Issue #72: hideUnfocusedPrompt opts out of the model-facing
+			// unfocused reminder only. The stale-checkpoint guard above and
+			// all focused-goal context below are unaffected.
+			if (loadGoalSettings(ctx.cwd).hideUnfocusedPrompt === true) return;
 			const openCount = otherOpenGoalCount(core.goalsById, null);
 			if (openCount > 0) {
 				return unfocusedOpenGoalsPrompt(openCount);

@@ -289,7 +289,7 @@ Do not perform task work for this stale checkpoint. Do not call tools. Reply bri
 export function unfocusedOpenGoalsPrompt(openGoalCount: number): string {
 	return [
 		"[PI GOAL UNFOCUSED]",
-		`${openGoalCount} open pi goal${openGoalCount === 1 ? "" : "s"} exist, but this session has no focused goal.`,
+		`${openGoalCount} open pi goal${openGoalCount === 1 ? " exists" : "s exist"}, but this session has no focused goal.`,
 		"Do not choose or switch focus autonomously. Focus is human-owned intent.",
 		"Ask the user to run /goal-focus, /goal-list, or /goal-resume before doing goal work.",
 	].join("\n");

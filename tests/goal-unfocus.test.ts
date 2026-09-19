@@ -8,6 +8,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import goalExtension from "../extensions/goal.ts";
 import { createGoal, goalFocusDetails, type GoalRecord } from "../extensions/goal-record.ts";
 import { writeActiveGoalFile } from "../extensions/storage/goal-files.ts";
+import { invalidateGoalSettingsCache } from "../extensions/goal-settings.ts";
 
 interface HarnessOptions {
 	cwd: string;
@@ -139,6 +140,83 @@ test("/goal-unfocus is idempotent, session-local, and leaves the active goal byt
 		const promptResult = await harness.handlers.get("context")?.({ messages: [] }, harness.ctx);
 		assert.match(promptResult?.messages?.at(-1)?.content ?? "", /\[PI GOAL UNFOCUSED\]/);
 		assert.doesNotMatch(promptResult?.messages?.at(-1)?.content ?? "", /\[PI GOAL ACTIVE/);
+	} finally {
+		fixture.cleanup();
+	}
+});
+
+function hasUnfocusedReminder(result: unknown): boolean {
+	return JSON.stringify(result ?? null).includes("PI GOAL UNFOCUSED");
+}
+
+test("hideUnfocusedPrompt suppresses the model-facing reminder on every request without touching goal state (#72)", async () => {
+	const fixture = createFixture({}, { autoSelectSingleGoal: false, disabled: true, hideUnfocusedPrompt: true });
+	const originalGoalFile = readFileSync(fixture.activePath);
+	const harness = createHarness({ cwd: fixture.cwd, sessionEntries: [] });
+	try {
+		await harness.handlers.get("session_start")?.({ reason: "startup" }, harness.ctx);
+		await harness.handlers.get("before_agent_start")?.({ systemPrompt: "base", prompt: "ordinary user request" }, harness.ctx);
+		for (let i = 0; i < 3; i++) {
+			const result = await harness.handlers.get("context")?.({ messages: [] }, harness.ctx);
+			assert.equal(hasUnfocusedReminder(result), false, `request ${i + 1} must not carry the unfocused reminder`);
+		}
+		assert.deepEqual(readFileSync(fixture.activePath), originalGoalFile, "hiding the reminder must not mutate the goal file");
+		assert.equal(harness.appendedEntries.filter((e) => e.customType === "pi-goal-focus").length, 0, "hiding the reminder must not change focus");
+		assert.equal(existsSync(path.join(fixture.cwd, ".pi", "goals", "goal_events.jsonl")), false);
+	} finally {
+		fixture.cleanup();
+	}
+});
+
+test("hideUnfocusedPrompt takes effect on the next request after a settings change", async () => {
+	const fixture = createFixture();
+	const settingsPath = path.join(fixture.cwd, ".pi", "pi-goal-x-settings.json");
+	const harness = createHarness({ cwd: fixture.cwd, sessionEntries: [] });
+	try {
+		await harness.handlers.get("session_start")?.({ reason: "startup" }, harness.ctx);
+		await harness.handlers.get("before_agent_start")?.({ systemPrompt: "base", prompt: "hello" }, harness.ctx);
+		const visible = await harness.handlers.get("context")?.({ messages: [] }, harness.ctx);
+		assert.match(visible?.messages?.at(-1)?.content ?? "", /\[PI GOAL UNFOCUSED\]\n1 open pi goal exists,/, "default keeps the reminder");
+
+		writeFileSync(settingsPath, JSON.stringify({ autoSelectSingleGoal: false, disabled: true, hideUnfocusedPrompt: true }));
+		invalidateGoalSettingsCache();
+		assert.equal(hasUnfocusedReminder(await harness.handlers.get("context")?.({ messages: [] }, harness.ctx)), false, "true hides it");
+
+		writeFileSync(settingsPath, JSON.stringify({ autoSelectSingleGoal: false, disabled: true, hideUnfocusedPrompt: false }));
+		invalidateGoalSettingsCache();
+		const restored = await harness.handlers.get("context")?.({ messages: [] }, harness.ctx);
+		assert.match(restored?.messages?.at(-1)?.content ?? "", /\[PI GOAL UNFOCUSED\]/, "false restores it");
+	} finally {
+		invalidateGoalSettingsCache();
+		fixture.cleanup();
+	}
+});
+
+test("hideUnfocusedBanner alone does not suppress the model-facing reminder", async () => {
+	const fixture = createFixture({}, { autoSelectSingleGoal: false, disabled: true, hideUnfocusedBanner: true });
+	const harness = createHarness({ cwd: fixture.cwd, sessionEntries: [] });
+	try {
+		await harness.handlers.get("session_start")?.({ reason: "startup" }, harness.ctx);
+		await harness.handlers.get("before_agent_start")?.({ systemPrompt: "base", prompt: "hello" }, harness.ctx);
+		const result = await harness.handlers.get("context")?.({ messages: [] }, harness.ctx);
+		assert.match(result?.messages?.at(-1)?.content ?? "", /\[PI GOAL UNFOCUSED\]/, "the banner setting must not reach the prompt path");
+	} finally {
+		fixture.cleanup();
+	}
+});
+
+test("hideUnfocusedPrompt never suppresses stale-checkpoint rejection", async () => {
+	const fixture = createFixture({}, { autoSelectSingleGoal: false, disabled: true, hideUnfocusedPrompt: true });
+	const harness = createHarness({ cwd: fixture.cwd, sessionEntries: [] });
+	try {
+		await harness.handlers.get("session_start")?.({ reason: "startup" }, harness.ctx);
+		await harness.handlers.get("before_agent_start")?.(
+			{ systemPrompt: "base", prompt: '<pi_goal_continuation goal_id="ghost-goal" kind="checkpoint">continue' },
+			harness.ctx,
+		);
+		assert.equal(harness.abortCount, 1, "stale checkpoint must still abort the turn");
+		const result = await harness.handlers.get("context")?.({ messages: [] }, harness.ctx);
+		assert.match(result?.messages?.at(-1)?.content ?? "", /\[GOAL STALE goalId=ghost-goal\]/);
 	} finally {
 		fixture.cleanup();
 	}
