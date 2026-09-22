@@ -23,6 +23,8 @@ The extension saves goal objectives, tasks, and progress across sessions. You ca
 pi install npm:pi-goal-x
 ```
 
+Supported Pi versions: **0.83–0.87**. The extension supports Node 22.15+; newer Pi releases require Node 22.19+.
+
 ## Create a goal
 
 ```text
@@ -120,6 +122,7 @@ Open `/goal-settings` to change these options. You can save defaults for all pro
 | Task tracking (`disableTasks`) | Turn task lists on or off. Set to `true` to disable them. |
 | Subtask depth (`subtaskDepth`) | Limit how many levels of subtasks the agent can create. |
 | Completion requirements (`disableContracts`) | Turn explicit goal and task completion requirements on or off. Set to `true` to disable them. |
+| Unfocused reminder (`hideUnfocusedPrompt`) | When a session has no focused goal but open goals exist in the selected pool, the agent receives a `[PI GOAL UNFOCUSED]` reminder on every request. Set to `true` to stop that reminder. Defaults to `false`. This is independent of `hideUnfocusedBanner`, which hides only the unfocused widget and status hint. Neither setting selects or resumes a goal; the separate `autoSelectSingleGoal` setting still applies. |
 | Auditor disabled | Turn off independent completion review. |
 | Auditor provider, model, and thinking level | Choose which model reviews completed work and its reasoning effort. |
 
@@ -165,10 +168,50 @@ pi.events.emit("pi-goal:wake", { goalId, waitToken });
 
 Existing producers that directly send `triggerTurn`/`followUp` messages still run as ordinary host work and supersede old pending decisions. Those independently started turns are **outside this extension's allowance**; use `pi-goal:wake` to put them through its spending gate. The allowance also does not limit Pi's own within-run tool loop or native retries. It bounds the goal extension's kickoff, continuation, check, signal, repair and recovery dispatches.
 
-## License
-
-MIT
-
 ### Prompt caching
 
 Goal state is refreshed at the request tail while the system prompt and conversation prefix stay stable. Pi retains control of provider cache settings. See [prompt caching](docs/prompt-caching.md) for explicit-cache handling, validation, and cache invalidation boundaries.
+
+### Changing a token budget
+
+Use the existing tweak flow: `/goal-tweak remove the token budget` or `/goal-tweak set the token budget to 50000`. The proposal shows the current and proposed limits before confirmation. A budget is a total lifetime limit, not an additional allocation; consumed tokens and completed work are preserved. Omitting a budget change retains the current limit.
+
+After confirmation, a goal stopped only by its budget can continue if the revised limit allows it and scheduling permits. A still-exhausted budget keeps it stopped. Other-session ownership, interrupted execution and exhausted autonomous-run allowances still require their existing recovery steps. Creation and tweak results always show the effective budget.
+
+### Optional arguments on Responses-compatible providers
+
+Some Pi `openai-responses` configurations omit the wire-level `strict` flag. OpenAI Responses may normalize schemas into strict mode when that flag is omitted. This can conflict with optional goal arguments; it is separate from pi-goal-x's `strictExecutionContract` scheduling setting.
+
+For the reported OpenCode model, a narrowly scoped Pi `models.json` override makes the supported Pi 0.84.1 adapter send `strict: false` for ordinary tools:
+
+```json
+{
+  "providers": {
+    "opencode": {
+      "modelOverrides": {
+        "gpt-6-astra": { "compat": { "supportsStrictMode": true } }
+      }
+    }
+  }
+}
+```
+
+The capability flag permits the adapter to send the explicit non-strict opt-out; it does not request strict sampling for ordinary goal tools. Merge this into existing model configuration and reload Pi. This is a provider-specific workaround, not a guarantee about third-party model behavior. The local reproduction inspects requests before transmission; the issue's live OpenCode A/B result has not been independently reproduced. See [issue #59](https://github.com/tmonk/pi-goal-x/issues/59) and [OpenAI's function-calling documentation](https://developers.openai.com/api/docs/guides/function-calling).
+
+### Sharing a goal pool across worktrees
+
+By default goals stay in `<cwd>/.pi/goals`. Set `goalsRoot` in your project or global settings to an absolute directory (or `~/path`), or set `PI_GOAL_ROOT` for the session. Precedence is environment, project, global, then the existing default. For example:
+
+```json
+{ "goalsRoot": "~/work/project-goals" }
+```
+
+Worktrees pointing to the same root share goals, archives, ledger and locks; focus remains session-local and execution ownership still requires explicit resume. The working directory for tools and audits is unchanged. Existing goals are not moved automatically. Reload/reopen the session after changing roots; `/goal-refresh` refreshes the selected pool. `/goal-status verbose` shows the effective location. Saved goal paths remain logical `.pi/goals/...` paths within that selected pool.
+
+`hideUnfocusedPrompt: true` suppresses ordinary unfocused reminders to the model independently of `hideUnfocusedBanner`; neither changes focus or bypasses stale-checkpoint checks.
+
+Token usage shown in the dashboard is cumulative across goal turns. The model receives a separate context snapshot when Pi can supply one; unavailable context is never reported as zero. Retained snapshots are bounded and newer snapshots supersede older ones.
+
+## License
+
+MIT
