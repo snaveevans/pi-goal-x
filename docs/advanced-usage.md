@@ -1,24 +1,8 @@
 # Advanced usage
 
-For installation and everyday commands, see the [README](../README.md).
+For installation, goal workflows, commands and the settings overview, see the [README](../README.md).
 
-## Settings and limits
-
-Open `/goal-settings` to change these options. You can save defaults for all projects, override them for the current project, or remove an override to use the inherited value.
-
-| Setting | What it controls |
-| --- | --- |
-| Explicit execution contracts (`strictExecutionContract`) | Opt-in ready/wait protocol with one missing-decision repair, then pause. Defaults to `false`: successful executions continue automatically. |
-| Autonomous run allowance (`maxAutonomousRuns`) | Positive whole number of extension-started runs per creation or `/goal-resume` period. **Unset means unlimited; zero disables automatic continuation.** Settings edits change the limit without resetting usage. |
-| Task tracking (`disableTasks`) | Turn task lists on or off. Set to `true` to disable them. |
-| Subtask depth (`subtaskDepth`) | Limit how many levels of subtasks the agent can create. |
-| Completion requirements (`disableContracts`) | Turn explicit goal and task completion requirements on or off. Set to `true` to disable them. |
-| Unfocused reminder (`hideUnfocusedPrompt`) | When a session has no focused goal but open goals exist in the selected pool, the agent receives a `[PI GOAL UNFOCUSED]` reminder on every request. Set to `true` to stop that reminder. Defaults to `false`. This is independent of `hideUnfocusedBanner`, which hides only the unfocused widget and status hint. Neither setting selects or resumes a goal; the separate `autoSelectSingleGoal` setting still applies. |
-| Auditor disabled | Turn off independent completion review. |
-| Auditor provider, model, and thinking level | Choose which model reviews completed work and its reasoning effort. |
-
-
-### Automatic continuation and optional execution contracts
+## Automatic continuation and optional execution contracts
 
 Active goals continue automatically after successful executions, including reasoning-only responses and final-task verification. No tool call, task update, scheduling declaration, or cooldown is required. Unproductive loops remain possible; optional run limits and token budgets still apply.
 
@@ -47,7 +31,7 @@ Use a future deadline appropriate to the task. Omit `polling` for an event-only 
 
 The dashboard, `/goal-status`, and `get_goal` show scheduling state, timing, checks, and allowance consumption. Expired waits and exhausted checks or allowance pause without another model call. Waits survive reopening the same session, without replaying missed checks; Pi must remain open for timers to execute. Another session requires explicit resume to take ownership. An ambiguous interrupted dispatch requires resume instead of automatic replay.
 
-### Background producer integration
+## Background producer integration
 
 Budget-controlled producers emit a scheduler signal instead of starting their own model turn:
 
@@ -59,17 +43,17 @@ pi.events.emit("pi-goal:wake", { goalId, waitToken });
 
 Existing producers that directly send `triggerTurn`/`followUp` messages still run as ordinary host work and supersede old pending decisions. Those independently started turns are **outside this extension's allowance**; use `pi-goal:wake` to put them through its spending gate. The allowance also does not limit Pi's own within-run tool loop or native retries. It bounds the goal extension's kickoff, continuation, check, signal, repair and recovery dispatches.
 
-### Prompt caching
+## Prompt caching
 
 Goal state is refreshed at the request tail while the system prompt and conversation prefix stay stable. Pi retains control of provider cache settings. See [prompt caching](prompt-caching.md) for explicit-cache handling, validation, and cache invalidation boundaries.
 
-### Changing a token budget
+## Changing a token budget
 
 Use the existing tweak flow: `/goal-tweak remove the token budget` or `/goal-tweak set the token budget to 50000`. The proposal shows the current and proposed limits before confirmation. A budget is a total lifetime limit, not an additional allocation; consumed tokens and completed work are preserved. Omitting a budget change retains the current limit.
 
 After confirmation, a goal stopped only by its budget can continue if the revised limit allows it and scheduling permits. A still-exhausted budget keeps it stopped. Other-session ownership, interrupted execution and exhausted autonomous-run allowances still require their existing recovery steps. Creation and tweak results always show the effective budget.
 
-### Optional arguments on Responses-compatible providers
+## Optional arguments on Responses-compatible providers
 
 Some Pi `openai-responses` configurations omit the wire-level `strict` flag. OpenAI Responses may normalize schemas into strict mode when that flag is omitted. This can conflict with optional goal arguments; it is separate from pi-goal-x's `strictExecutionContract` scheduling setting.
 
@@ -89,7 +73,7 @@ For the reported OpenCode model, a narrowly scoped Pi `models.json` override mak
 
 The capability flag permits the adapter to send the explicit non-strict opt-out; it does not request strict sampling for ordinary goal tools. Merge this into existing model configuration and reload Pi. This is a provider-specific workaround, not a guarantee about third-party model behavior. The local reproduction inspects requests before transmission; the issue's live OpenCode A/B result has not been independently reproduced. See [issue #59](https://github.com/tmonk/pi-goal-x/issues/59) and [OpenAI's function-calling documentation](https://developers.openai.com/api/docs/guides/function-calling).
 
-### Sharing a goal pool across worktrees
+## Sharing a goal pool across worktrees
 
 By default goals stay in `<cwd>/.pi/goals`. Set `goalsRoot` in your project or global settings to an absolute directory (or `~/path`), or set `PI_GOAL_ROOT` for the session. Precedence is environment, project, global, then the existing default. For example:
 
