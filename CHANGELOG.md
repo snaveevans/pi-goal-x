@@ -4,6 +4,13 @@ All notable changes to pi-goal-x are documented here.
 
 ## [Unreleased]
 
+## [0.31.8] — 2026-09-22
+
+### Documentation
+
+- Keep the README focused on the established overview through Settings; move detailed technical guidance into the packaged advanced-usage guide.
+- Add repository instructions preventing unsolicited README expansion. No runtime behavior changes.
+
 ## [0.31.7] — 2026-09-22
 
 ### Fixed
