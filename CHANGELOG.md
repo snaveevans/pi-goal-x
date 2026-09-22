@@ -4,13 +4,14 @@ All notable changes to pi-goal-x are documented here.
 
 ## [Unreleased]
 
+## [0.31.7] — 2026-09-22
+
 ### Fixed
 
 - Keep deferred goal widgets independent of replaced host contexts (#78); support tested Pi 0.83–0.87 hosts (#77).
 - Preserve advancing implicit-cache prefixes with bounded request-only tails and relocate explicit markers past effort-only messages (#71, #79). Distinguish cumulative spending from context occupancy (#76).
 - Prefer rich questionnaires on capable RPC hosts while preserving primitive fallback and cancellation (#66).
 - Allow independent unfocused prompt suppression (#72, #75) and opt-in shared goal storage via `goalsRoot` / `PI_GOAL_ROOT` (#73). No new commands or tools.
-
 - Show effective token budgets on creation and support confirmed budget changes through the existing `/goal-tweak` flow (#59), preserving progress and consumed usage. Coalesce simultaneous budget threshold warnings.
 
 ## [0.31.6] — 2026-09-17
