@@ -545,3 +545,28 @@ test("prompt cache: cleared scheduling instructions vanish from retained history
 	const second: any[] = (await h.handlers.context!({messages: advanced}, h.ctx)).messages;
 	assert.ok(!second.some((m: any) => typeof m.content === "string" && m.content.includes("Publish release v1")), "no retained tail re-issues the cancelled order");
 });
+
+
+test("prompt cache: model changes and missing identities cannot replay another request's counters", async t => {
+ const h = await fixture(t);
+ const history = [{role: "user", content: "inspect", timestamp: 1}];
+ const request = async (ctx: ExtensionContext) => (await h.handlers.context!({messages: history}, ctx)).messages as any[];
+ const initial = {...h.ctx, model: {provider: "provider-a", id: "model-a"}} as ExtensionContext;
+ await request(initial);
+ h.core.state.goal!.usage.tokensUsed = 123456;
+ for (const model of [{provider: "provider-a", id: "model-b"}, {provider: "provider-b", id: "model-b"}]) {
+  const out = await request({...h.ctx, model} as ExtensionContext);
+  assert.equal(out.filter(m => m.customType === "pi-goal-live-context").length, 2);
+  assert.match(out.at(-1).content, /123456 tokens/);
+ }
+ const unknown = {...h.ctx, sessionManager: {...h.ctx.sessionManager, getSessionId: () => undefined}} as unknown as ExtensionContext;
+ await request(unknown);
+ h.core.state.goal!.usage.tokensUsed = 234567;
+ const next = await request(unknown);
+ assert.equal(next.filter(m => m.customType === "pi-goal-live-context").length, 2);
+ assert.ok(!JSON.stringify(next).includes("123456 tokens"));
+ await h.handlers.session_shutdown!({}, initial);
+ const restarted = await request(initial);
+ assert.equal(restarted.filter(m => m.customType === "pi-goal-live-context").length, 2);
+ assert.match(restarted.at(-1).content, /234567 tokens/);
+});

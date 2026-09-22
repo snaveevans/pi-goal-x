@@ -145,7 +145,8 @@ export class LiveTailRetention {
 		// A changed state block supersedes every previously sent tail: start
 		// fresh rather than leave a stale objective or a cancelled scheduling
 		// instruction lingering mid-history.
-		if (session.lastFresh !== undefined && session.lastFresh.state !== fresh.state) reset();
+		if (session.lastFresh !== undefined && (session.lastFresh.state !== fresh.state
+			|| (session.lastFresh.counters !== undefined && fresh.counters === undefined))) reset();
 		// Tails anchored while history was empty would linger at the head once
 		// real history arrives. Reset once so fresh tails anchor at the tail.
 		if (session.tails.length > 0 && session.baseFingerprints.length === 0 && base.length > 0) reset();
@@ -162,9 +163,8 @@ export class LiveTailRetention {
 				}
 			}
 		}
-		// Truncate at the first anchor that no longer matches or that would now
-		// split a tool-call batch. Re-appending below guarantees the live
-		// state is never lost silently.
+		// An unsafe anchor invalidates the whole replay. Keeping an earlier
+		// policy while re-appending fresh blocks would duplicate that policy.
 		let valid = 0;
 		while (valid < session.tails.length) {
 			const tail = session.tails[valid]!;
@@ -176,10 +176,7 @@ export class LiveTailRetention {
 			if (splitsToolBatch(base[tail.anchorIndex])) break;
 			valid++;
 		}
-		if (valid < session.tails.length) {
-			session.tails = session.tails.slice(0, valid);
-			session.lastFresh = undefined;
-		}
+		if (valid < session.tails.length) reset();
 		const blocks = freshBlocks(fresh);
 		// Append only the suffix that differs from the last emitted tails, so
 		// unchanged content across repeats, tool loops, and history advances

@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { createGoal } from "../extensions/goal-record.ts";
+import { createGoalCore } from "../extensions/goal-state.ts";
+import { createGoal, goalFocusDetails } from "../extensions/goal-record.ts";
 import { invalidateGoalSettingsCache, loadGoalSettings } from "../extensions/goal-settings.ts";
 import { goalStorageRoot, goalStoragePath, goalStorageContext, goalPoolSnapshotPath } from "../extensions/storage/goal-root.ts";
 import { writeActiveGoalFile, archiveGoalFile, readActiveGoalPool, invalidateGoalPoolCache } from "../extensions/storage/goal-files.ts";
@@ -86,4 +87,33 @@ test("default paths stay compatible; root configuration honors environment prece
 	const b = f.context("configured");
 	assert.equal(loadGoalSettings(b.cwd, { PI_GOAL_ROOT: "/env-pool" }).goalsRoot, "/env-pool");
 	assert.equal(loadGoalSettings(b.cwd, {}).goalsRoot, f.root);
+});
+
+
+test("shared worktrees reject stale revisions and refresh the winning write", async t => {
+ const f = fixture(t), a = f.context("writer-a"), b = f.context("writer-b");
+ const goal = writeActiveGoalFile(a, createGoal({objective: "Shared initial", autoContinue: true, sisyphus: false}));
+ const coreFor = async (storage: typeof a) => {
+  const core = createGoalCore({getActiveTools: () => [], setActiveTools() {}, appendEntry() {}} as any);
+  const ctx = {...storage, hasUI: false, ui: {setStatus() {}, setWidget() {}, notify() {}}, sessionManager: {...storage.sessionManager, getBranch: () => [{type: "custom", customType: "pi-goal-focus", data: {...goalFocusDetails(goal.id, "created"), storageRoot: f.root}}]}} as any;
+  await core.loadState(ctx);
+  return {core, ctx};
+ };
+ const first = await coreFor(a), second = await coreFor(b);
+ assert.equal(first.core.state.goal?.id, goal.id);
+ assert.equal(second.core.state.goal?.id, goal.id);
+ const mutate = (objective: string) => ({reconcile: false, mutate: (g: typeof goal) => ({...g, objective})});
+ assert.equal(first.core.goalService.apply(first.ctx, mutate("Winning edit")).ok, true);
+ const stale = second.core.goalService.apply(second.ctx, mutate("Stale overwrite"));
+ assert.equal(stale.ok, false);
+ if (!stale.ok) assert.match(stale.message, /revision/i);
+ invalidateGoalPoolCache();
+ await second.core.loadState(second.ctx);
+ assert.equal(second.core.state.goal?.objective, "Winning edit");
+ assert.equal(second.core.goalService.apply(second.ctx, mutate("Fresh edit")).ok, true);
+ assert.equal(readActiveGoalPool(a).get(goal.id)?.objective, "Fresh edit");
+ fs.rmSync(f.root, {recursive: true});
+ invalidateGoalPoolCache();
+ assert.throws(() => readActiveGoalPool(a), /ENOENT/);
+ assert.equal(fs.existsSync(f.root), false, "refresh does not recreate a missing pinned pool");
 });

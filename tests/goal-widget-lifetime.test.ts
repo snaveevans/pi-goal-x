@@ -31,4 +31,16 @@ for (const focused of [false, true]) test(`deferred widget render survives stale
 	await Promise.resolve();
 	core.toggleDashboardExpanded();
 	assert.doesNotThrow(() => component.render(100));
+	const nextCwd = fs.mkdtempSync(path.join(os.tmpdir(), "goal-widget-replacement-"));
+	t.after(() => fs.rmSync(nextCwd, {recursive: true, force: true}));
+	const nextGoal = writeActiveGoalFile({cwd: nextCwd}, createGoal({objective: "Replacement objective", autoContinue: true, sisyphus: false}));
+	const nextCtx = {cwd: nextCwd, hasUI: true, ui: {setStatus() {}, setWidget: (_key: string, factory: unknown) => { if (typeof factory === "function") factories.push(factory); }}, sessionManager: {getSessionId: () => "replacement", getBranch: () => [{type: "custom", customType: "pi-goal-focus", data: goalFocusDetails(nextGoal.id, "created")}]}} as unknown as ExtensionContext;
+	const count = factories.length;
+	await core.loadState(nextCtx);
+	core.updateUI(nextCtx);
+	await Promise.resolve();
+	assert.ok(factories.length > count, "replacement re-registers the widget");
+	assert.equal(core.state.goal?.id, nextGoal.id);
+	const nextComponent = factories.at(-1)!({requestRender() {}, terminal: {rows: 40, columns: 100}}, {fg: (_: string, text: string) => text, bold: (text: string) => text});
+	assert.match(nextComponent.render(100).join("\n"), /Replacement objective/);
 });
