@@ -45,10 +45,19 @@ jobs:
           npm run context:gate
           npm run context:provider-check
           node --experimental-strip-types experiments/context/retention-check.mjs
+      - name: Check out benchmark base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.before }}
+          path: .benchmark-base
       - name: Runtime benchmark regression gate
         run: |
+          ln -s "$GITHUB_WORKSPACE/node_modules" .benchmark-base/node_modules
+          # Main preserves compact historical checkpoints; use the corrected fixture for both runs.
+          cp experiments/bench/b10-checkpoint-growth.mjs .benchmark-base/experiments/bench/b10-checkpoint-growth.mjs
+          npm --prefix .benchmark-base run bench:naf -- after naf
           npm run bench:naf -- after naf
-          npm run bench:gate:naf
+          PI_GOAL_BENCH_REFERENCE="$GITHUB_WORKSPACE/.benchmark-base/experiments/bench/baseline-naf-after.json" npm run bench:gate:naf
 
   compatibility:
     runs-on: ubuntu-latest
