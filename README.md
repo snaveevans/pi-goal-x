@@ -23,8 +23,6 @@ The extension saves goal objectives, tasks, and progress across sessions. You ca
 pi install npm:pi-goal-x
 ```
 
-Supported Pi versions: **0.83–0.87**. The extension supports Node 22.15+; newer Pi releases require Node 22.19+.
-
 ## Create a goal
 
 ```text
