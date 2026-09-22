@@ -124,8 +124,6 @@ Open `/goal-settings` to change these options. You can save defaults for all pro
 | Auditor disabled | Turn off independent completion review. |
 | Auditor provider, model, and thinking level | Choose which model reviews completed work and its reasoning effort. |
 
-See [advanced usage](docs/advanced-usage.md) for execution contracts, token-budget changes, shared worktree storage and provider troubleshooting, or [prompt caching](docs/prompt-caching.md) for cache behavior.
-
 ## License
 
 MIT
