@@ -13,9 +13,7 @@
 
 # pi-goal-x
 
-Adds `/goal` functionality to [pi](https://github.com/earendil-works/pi-coding-agent). The agent helps you define a goal and plan, continues working on it automatically, and submits the result to an optional independent completion auditor.
-
-The extension saves goal objectives, tasks, and progress across sessions. You can pause, resume, revise, or switch goals as your work changes.
+Persistent goals for [Pi](https://github.com/earendil-works/pi-coding-agent). Define a goal, review the plan, and let the agent work through it. Tasks and progress are saved across sessions, with an optional independent auditor checking completion.
 
 ## Install
 
@@ -23,72 +21,23 @@ The extension saves goal objectives, tasks, and progress across sessions. You ca
 pi install npm:pi-goal-x
 ```
 
-Supported Pi versions: **0.83–0.87**. The extension supports Node 22.15+; newer Pi releases require Node 22.19+.
+Supports Pi **0.83–0.87**. Node 22.15+ is required; newer Pi releases require Node 22.19+.
 
-## Create a goal
+## Start a goal
 
 ```text
 /goal Add CSV export to the reports page, with documentation and tests.
 ```
 
-The agent discusses the goal with you, asks focused questions where needed, and proposes an objective, task plan, and completion requirements. You review the proposal and choose whether to use the completion auditor. Once you confirm, the agent starts working and continues automatically while the goal is active.
+Review the proposed objective and tasks, choose whether to use the completion auditor, and confirm to start. The agent continues automatically while the goal is active. If auditing is enabled, unmet requirements leave the goal open with feedback.
 
-You can specify completion requirements, such as passing the test suite or producing a report with every required section. The agent tracks tasks and subtasks, records evidence, and works toward those requirements. If it gets blocked and needs your input, you can resolve the issue and resume.
+Use `/sisyphus` for an ordered plan that must be followed step by step. Use `/goal-direct <objective>` or `/sisyphus-direct <objective>` to skip drafting.
 
-If you already have a complete objective, use `/goal-direct <objective>` to create the goal and start immediately without drafting.
+## Manage your work
 
-## Goal types
+The dashboard shows status, task progress, elapsed time and cumulative token usage. Press `Ctrl+Shift+T` to expand it, or `Ctrl+Shift+A` to toggle the completion auditor.
 
-| Type | Behaviour | Example uses |
-| --- | --- | --- |
-| **Regular** — `/goal` | An outcome to achieve, with the agent choosing and adapting the plan. | Features, debugging, research, and documentation. |
-| **Sisyphus** — `/sisyphus` | An ordered plan that the agent follows one step at a time. | Migrations, staged refactors, and release procedures. |
-
-For an ordered goal, you can provide the steps or define them with the agent:
-
-```text
-/sisyphus Migrate authentication in this order:
-1. Add the new token validator.
-2. Update login and session refresh to use it.
-3. Remove the old validator.
-4. Run the authentication tests.
-```
-
-Use `/sisyphus-direct <objective>` to start an ordered goal without drafting.
-
-## Tasks and subtasks
-
-The agent can divide a goal into tasks and subtasks, each describing part of the work required to complete it. During guided goal creation, you review the proposed plan before work begins.
-
-For example, a CSV export goal could have this task plan:
-
-```text
-Add CSV export to reports
-├─ Review the report data and active filters
-├─ Implement CSV export
-│  ├─ Generate the CSV from filtered results
-│  └─ Add a download button
-├─ Test the export
-└─ Document how to use it
-```
-
-As work progresses, the agent marks the current task, records completed work, and explains any skipped tasks. The dashboard shows what is done and what remains, including progress within subtasks. Task progress is saved when you pause and remains available in later sessions.
-
-Tasks can also have their own completion requirements—for example, “The download contains only rows matching the active filters.” The agent records evidence against those requirements, and the completion auditor uses that evidence when reviewing the overall result.
-
-Use `/goal-tweak <change>` to discuss revisions to the goal and its plan. Task tracking, completion requirements, and subtask depth are configurable in `/goal-settings`.
-
-## Completion auditor
-
-When enabled, a separate agent reviews the work before the goal is accepted as complete. It checks the objective, tasks, recorded evidence, completion requirements, and workspace.
-
-If the auditor approves, the goal is archived as complete. If it identifies unmet requirements, the goal remains open with feedback describing the work still needed. You can choose the auditor model in `/goal-settings` and toggle auditing for the focused goal with `Ctrl+Shift+A`.
-
-## Progress and goal controls
-
-The dashboard above the editor shows the goal's status, task progress, current task, elapsed time, and token usage. Press `Ctrl+Shift+T` to expand it for the full task tree, completion requirements, evidence, and recent activity. Audit progress and results appear there too.
-
-A project can have several open goals, with one focused goal per session. Switch with `/goal-focus`, pause with `/goal-pause`, or use `/goal-tweak` to discuss changes to the current goal. Pressing `Esc` during active work also pauses the goal; in the expanded dashboard, it collapses the view.
+Each session has one focused goal. Pause with `/goal-pause`, continue with `/goal-resume`, and switch with `/goal-focus`. Pressing `Esc` during active work also pauses the goal; in the expanded dashboard, it collapses the view.
 
 ## Commands
 
@@ -109,108 +58,15 @@ A project can have several open goals, with one focused goal per session. Switch
 | `/goal-cancel` | Cancel an unconfirmed draft. |
 | `/goal-settings` | Configure goal behaviour and the auditor. |
 
-For troubleshooting, use `/goal-status verbose` for more detail, `/goal-status health` or `/goal-recovery` to check for problems, and `/goal-refresh` to reload saved goals and settings after external changes. `/goal-recovery repair` offers repairs after confirmation.
+## Settings and limits
 
-## Settings
+Use `/goal-settings` to configure task tracking, completion requirements, the auditor and project or global defaults.
 
-Open `/goal-settings` to change these options. You can save defaults for all projects, override them for the current project, or remove an override to use the inherited value.
+Automatic continuation is unlimited by default. Set `maxAutonomousRuns` to cap extension-started runs; zero disables them. `/goal-resume` renews the run allowance. Token budgets are lifetime spending limits, separate from context capacity. To change one, use `/goal-tweak set the token budget to 50000` or `/goal-tweak remove the token budget` and confirm the proposal.
 
-| Setting | What it controls |
-| --- | --- |
-| Explicit execution contracts (`strictExecutionContract`) | Opt-in ready/wait protocol with one missing-decision repair, then pause. Defaults to `false`: successful executions continue automatically. |
-| Autonomous run allowance (`maxAutonomousRuns`) | Positive whole number of extension-started runs per creation or `/goal-resume` period. **Unset means unlimited; zero disables automatic continuation.** Settings edits change the limit without resetting usage. |
-| Task tracking (`disableTasks`) | Turn task lists on or off. Set to `true` to disable them. |
-| Subtask depth (`subtaskDepth`) | Limit how many levels of subtasks the agent can create. |
-| Completion requirements (`disableContracts`) | Turn explicit goal and task completion requirements on or off. Set to `true` to disable them. |
-| Unfocused reminder (`hideUnfocusedPrompt`) | When a session has no focused goal but open goals exist in the selected pool, the agent receives a `[PI GOAL UNFOCUSED]` reminder on every request. Set to `true` to stop that reminder. Defaults to `false`. This is independent of `hideUnfocusedBanner`, which hides only the unfocused widget and status hint. Neither setting selects or resumes a goal; the separate `autoSelectSingleGoal` setting still applies. |
-| Auditor disabled | Turn off independent completion review. |
-| Auditor provider, model, and thinking level | Choose which model reviews completed work and its reasoning effort. |
+Goals are stored in `.pi/goals` by default. See [advanced usage](docs/advanced-usage.md) for shared worktree storage, reminder settings, execution contracts and provider troubleshooting, or [prompt caching](docs/prompt-caching.md) for cache behavior.
 
-
-### Automatic continuation and optional execution contracts
-
-Active goals continue automatically after successful executions, including reasoning-only responses and final-task verification. No tool call, task update, scheduling declaration, or cooldown is required. Unproductive loops remain possible; optional run limits and token budgets still apply.
-
-Enable `strictExecutionContract: true` in `/goal-settings` or your global/project settings to require explicit ready/wait decisions. In that mode, a missing decision permits one repair prompt within the remaining allowance, then pauses. This is a user preference; agents should not enable it merely to continue.
-
-Set an appropriate allowance in `/goal-settings`, or in `.pi/pi-goal-x-settings.json`:
-
-```json
-{ "maxAutonomousRuns": 20 }
-```
-
-Agents may edit this setting. Changing it does not replenish consumed runs; explicit `/goal-resume` renews the period and continues now, including from a waiting goal. No configured allowance is required unless the effective limit is zero, which disables resume. Tool calls within a run are not separate runs. Existing token budgets still apply.
-
-Explicit `ready` is optional in default mode. New `wait` declarations require strict mode; otherwise they return a non-terminating error. Previously saved waits retain their deadline, checks, and repair rules when upgrading or disabling strict mode, and may be re-declared with the same identity. Mode changes never resume a paused goal or renew consumed runs.
-
-```js
-update_goal({ continuation: { kind: "ready", next_action: "Verify the build artifacts" } })
-update_goal({ continuation: {
-  kind: "wait", reason: "Await the remote build",
-  deadline: "2026-09-15T12:00:00Z",
-  polling: { interval_seconds: 60, max_checks: 3 }
-} })
-```
-
-Use a future deadline appropriate to the task. Omit `polling` for an event-only wait. Successful declarations terminate the execution segment. On a scheduled check, reuse the returned `wait_id` and original deadline, omitting `polling`; remaining checks cannot be reset. A ready decision ends the wait. Time spent waiting is not active execution time.
-
-The dashboard, `/goal-status`, and `get_goal` show scheduling state, timing, checks, and allowance consumption. Expired waits and exhausted checks or allowance pause without another model call. Waits survive reopening the same session, without replaying missed checks; Pi must remain open for timers to execute. Another session requires explicit resume to take ownership. An ambiguous interrupted dispatch requires resume instead of automatic replay.
-
-### Background producer integration
-
-Budget-controlled producers emit a scheduler signal instead of starting their own model turn:
-
-```js
-pi.events.emit("pi-goal:wake", { goalId, waitToken });
-```
-
-`waitToken` is returned in the wait declaration's tool-result details. Register it before the producer completes, or retain the completion until registration (for example, observe the `update_goal` tool result in the host adapter). The token changes after consumption and re-declaration. A matching signal received before agent settlement is retained; duplicate, stale and wrong-goal tokens are ignored. A signal and timer can claim only one wake.
-
-Existing producers that directly send `triggerTurn`/`followUp` messages still run as ordinary host work and supersede old pending decisions. Those independently started turns are **outside this extension's allowance**; use `pi-goal:wake` to put them through its spending gate. The allowance also does not limit Pi's own within-run tool loop or native retries. It bounds the goal extension's kickoff, continuation, check, signal, repair and recovery dispatches.
-
-### Prompt caching
-
-Goal state is refreshed at the request tail while the system prompt and conversation prefix stay stable. Pi retains control of provider cache settings. See [prompt caching](docs/prompt-caching.md) for explicit-cache handling, validation, and cache invalidation boundaries.
-
-### Changing a token budget
-
-Use the existing tweak flow: `/goal-tweak remove the token budget` or `/goal-tweak set the token budget to 50000`. The proposal shows the current and proposed limits before confirmation. A budget is a total lifetime limit, not an additional allocation; consumed tokens and completed work are preserved. Omitting a budget change retains the current limit.
-
-After confirmation, a goal stopped only by its budget can continue if the revised limit allows it and scheduling permits. A still-exhausted budget keeps it stopped. Other-session ownership, interrupted execution and exhausted autonomous-run allowances still require their existing recovery steps. Creation and tweak results always show the effective budget.
-
-### Optional arguments on Responses-compatible providers
-
-Some Pi `openai-responses` configurations omit the wire-level `strict` flag. OpenAI Responses may normalize schemas into strict mode when that flag is omitted. This can conflict with optional goal arguments; it is separate from pi-goal-x's `strictExecutionContract` scheduling setting.
-
-For the reported OpenCode model, a narrowly scoped Pi `models.json` override makes the supported Pi 0.84.1 adapter send `strict: false` for ordinary tools:
-
-```json
-{
-  "providers": {
-    "opencode": {
-      "modelOverrides": {
-        "gpt-6-astra": { "compat": { "supportsStrictMode": true } }
-      }
-    }
-  }
-}
-```
-
-The capability flag permits the adapter to send the explicit non-strict opt-out; it does not request strict sampling for ordinary goal tools. Merge this into existing model configuration and reload Pi. This is a provider-specific workaround, not a guarantee about third-party model behavior. The local reproduction inspects requests before transmission; the issue's live OpenCode A/B result has not been independently reproduced. See [issue #59](https://github.com/tmonk/pi-goal-x/issues/59) and [OpenAI's function-calling documentation](https://developers.openai.com/api/docs/guides/function-calling).
-
-### Sharing a goal pool across worktrees
-
-By default goals stay in `<cwd>/.pi/goals`. Set `goalsRoot` in your project or global settings to an absolute directory (or `~/path`), or set `PI_GOAL_ROOT` for the session. Precedence is environment, project, global, then the existing default. For example:
-
-```json
-{ "goalsRoot": "~/work/project-goals" }
-```
-
-Worktrees pointing to the same root share goals, archives, ledger and locks; focus remains session-local and execution ownership still requires explicit resume. The working directory for tools and audits is unchanged. Existing goals are not moved automatically. Reload/reopen the session after changing roots; `/goal-refresh` refreshes the selected pool. `/goal-status verbose` shows the effective location. Saved goal paths remain logical `.pi/goals/...` paths within that selected pool.
-
-`hideUnfocusedPrompt: true` suppresses ordinary unfocused reminders to the model independently of `hideUnfocusedBanner`; neither changes focus or bypasses stale-checkpoint checks.
-
-Token usage shown in the dashboard is cumulative across goal turns. The model receives a separate context snapshot when Pi can supply one; unavailable context is never reported as zero. Retained snapshots are bounded and newer snapshots supersede older ones.
+For diagnostics, use `/goal-status verbose` or `/goal-status health`. `/goal-refresh` reloads saved goals and settings; `/goal-recovery` checks storage.
 
 ## License
 
