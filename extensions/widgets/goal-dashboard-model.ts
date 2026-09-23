@@ -54,6 +54,7 @@ export interface GoalDashboardModel {
 		percentage: number;
 		remaining: number;
 	};
+	costBudget?: { used: number; total: number; percentage: number; remaining: number };
 
 	taskProgress?: {
 		completed: number;
@@ -511,6 +512,12 @@ export function deriveGoalDashboardModel(
 			footerBits: footerUsageBits.join(" "),
 		},
 		budget,
+		costBudget: goal.maxCostUsd === undefined ? undefined : {
+			used: goal.usage.costUsd ?? 0,
+			total: goal.maxCostUsd,
+			percentage: percentageOf(goal.usage.costUsd ?? 0, goal.maxCostUsd),
+			remaining: Math.max(0, goal.maxCostUsd - (goal.usage.costUsd ?? 0)),
+		},
 		taskProgress,
 		taskTree,
 		currentTask,

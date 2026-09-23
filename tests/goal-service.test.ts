@@ -593,6 +593,7 @@ describe("persist additive usage merge on revision conflict", () => {
 			const a1 = cloneGoal(f.ref.getFocused()!);
 			a1.usage.tokensUsed = 50;
 			a1.usage.activeSeconds = 10;
+			a1.usage.costUsd = 0.10;
 			f.ref.setFocused(a1);
 			const first = f.service.persist({ cwd: f.cwd });
 			assert.ok(first, "first persist must succeed");
@@ -607,6 +608,7 @@ describe("persist additive usage merge on revision conflict", () => {
 			bDisk.objective = "=== Goal ===\nObjective: Writer B objective";
 			bDisk.usage.tokensUsed = 70;
 			bDisk.usage.activeSeconds = 12;
+			bDisk.usage.costUsd = 0.20;
 			bDisk.revision = (diskGoal!.revision ?? 0) + 1;
 			writeActiveGoalFile({ cwd: f.cwd }, bDisk);
 
@@ -614,6 +616,7 @@ describe("persist additive usage merge on revision conflict", () => {
 			const a2 = cloneGoal(f.ref.getFocused()!);
 			a2.usage.tokensUsed = 80;
 			a2.usage.activeSeconds = 17;
+			a2.usage.costUsd = 0.15;
 			f.ref.setFocused(a2);
 
 			// A persists: the revision moved, so only the additive delta
@@ -622,6 +625,7 @@ describe("persist additive usage merge on revision conflict", () => {
 			assert.ok(merged, "persist must merge instead of returning null");
 			assert.equal(merged.usage.tokensUsed, 100, "disk 70 + session delta 30");
 			assert.equal(merged.usage.activeSeconds, 19, "disk 12 + session delta 7");
+			assert.ok(Math.abs((merged.usage.costUsd ?? 0) - 0.25) < 1e-9, "disk $0.20 + session cost delta $0.05");
 			assert.equal(merged.revision, (diskGoal!.revision ?? 0) + 2, "revision advances past the conflict");
 			assert.ok(merged.objective.includes("Writer B objective"), "authoritative disk objective must be preserved");
 
@@ -637,6 +641,7 @@ describe("persist additive usage merge on revision conflict", () => {
 			assert.ok(again, "persist after merge succeeds on the success path");
 			assert.equal(again.usage.tokensUsed, 100, "usage must not double-count after the merge");
 			assert.equal(again.usage.activeSeconds, 19, "activeSeconds must not double-count after the merge");
+			assert.ok(Math.abs((again.usage.costUsd ?? 0) - 0.25) < 1e-9, "cost must not double-count after the merge");
 		} finally {
 			f.cleanup();
 		}

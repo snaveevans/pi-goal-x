@@ -92,15 +92,15 @@ A project can have several open goals, with one focused goal per session. Switch
 
 | Command | What it does |
 | --- | --- |
-| `/goal [idea]` | Discuss, plan, and confirm a regular goal. |
-| `/sisyphus [idea]` | Discuss, plan, and confirm an ordered goal. |
-| `/goal-direct <objective>` | Create and start a regular goal immediately. |
-| `/sisyphus-direct <objective>` | Create and start an ordered goal immediately. |
+| `/goal [--max-cost 5.00] [idea]` | Discuss, plan, and confirm a regular goal; optional estimated USD cap includes drafting. |
+| `/sisyphus [--max-cost 5.00] [idea]` | Discuss, plan, and confirm an ordered goal. |
+| `/goal-direct [--max-cost 5.00] <objective>` | Create and start a regular goal immediately. |
+| `/sisyphus-direct [--max-cost 5.00] <objective>` | Create and start an ordered goal immediately. |
 | `/goal-list` | List open goals. |
 | `/goal-status` | Show the focused goal and its progress. |
 | `/goal-focus` | Choose an open goal to work on. |
 | `/goal-unfocus` | Leave the current goal open without focusing on it. |
-| `/goal-tweak <change>` | Revise the current goal with the agent. |
+| `/goal-tweak <change>` | Revise the current goal or raise/remove its cost cap with the agent. |
 | `/goal-pause` | Pause work on the focused goal. |
 | `/goal-resume` | Resume a paused or blocked goal. |
 | `/goal-clear` | Archive the focused goal after confirmation. |

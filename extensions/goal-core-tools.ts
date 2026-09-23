@@ -7,7 +7,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { formatDuration, formatTokenValue, statusLabel, truncateText } from "./goal-core.ts";
 import { extractVerificationContract } from "./goal-contract.ts";
 import { detailedSummary, goalDetails, renderGoalResult } from "./goal-format.ts";
-import { modelBudgetLine } from "./goal-accounting.ts";
+import { modelBudgetLine, costBudgetLine } from "./goal-accounting.ts";
 import { buildGoalCreatedReport, buildTaskSummary, findTaskInTree, validateGoalAgentPause, validateGoalBlock } from "./goal-policy.ts";
 import { buildUnfocusedOpenGoalsSummary, otherOpenGoalCount } from "./goal-pool.ts";
 import { readGoalLedger, goalOracleState } from "./goal-ledger.ts";
@@ -15,7 +15,7 @@ import { loadGoalSettings } from "./goal-settings.ts";
 import { buildGoalHistoryBlock, buildGoalTaskDetailBlock } from "./goal-format.ts";
 import { sisyphusStepProgress } from "./goal-policy.ts";
 import { deriveTasksFromObjective } from "./goal-task-derive.ts";
-import { nowIso, type GoalRecord, type GoalTask, validateTokenBudgetInput } from "./goal-record.ts";
+import { nowIso, type GoalRecord, type GoalTask, validateTokenBudgetInput, validateMaxCostUsd } from "./goal-record.ts";
 import type { GoalCore } from "./goal-state.ts";
 import { promptProfile } from "./prompts/goal-prompts.ts";
 import {
@@ -102,6 +102,8 @@ pi.registerTool(defineTool({
 			lines.push(`Cumulative goal usage (not context occupancy): ${usageBits.length > 0 ? usageBits.join(" · ") : "none"}`);
 			const budget = modelBudgetLine(view);
 			if (budget) lines.push(`Budget: ${budget}`);
+			const cost = costBudgetLine(view);
+			if (cost) lines.push(cost);
 			if (view.taskList) {
 				lines.push(`Tasks: ${buildTaskSummary(view.taskList)}`);
 				// F1: task-detail block mirroring the widget.
@@ -147,6 +149,8 @@ pi.registerTool(defineTool({
 		}
 		const budget = modelBudgetLine(view);
 		if (budget) lines.push(`Budget: ${budget}`);
+		const cost = costBudgetLine(view);
+		if (cost) lines.push(cost);
 		if ((view.status === "paused" || view.status === "blocked") && view.pauseReason) {
 			lines.push(`Blocker: ${view.pauseReason}`);
 		}
@@ -177,6 +181,7 @@ pi.registerTool(defineTool({
 		objective: Type.String({ description: "Full objective; preserve ordered steps and done criteria." }),
 		mode: Type.Optional(StringEnum(["regular", "sisyphus"] as const, { description: "Default regular; sisyphus only if requested." })),
 		token_budget: Type.Optional(Type.Integer({ minimum: 1, description: "Whole-token budget, only if supplied by the user." })),
+		max_cost_usd: Type.Optional(Type.Number({ minimum: 0.01, description: "Lifetime estimated USD cost cap in cents, only when explicitly requested by the user." })),
 	}, { additionalProperties: false }),
 	executionMode: "sequential",
 	async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -203,9 +208,15 @@ pi.registerTool(defineTool({
 			}
 			tokenBudget = budgetGate.value;
 		}
+		let maxCostUsd: number | undefined;
+		if (params.max_cost_usd !== undefined) {
+			const parsed = validateMaxCostUsd(params.max_cost_usd);
+			if (!parsed.ok) return { content: [{type: "text", text: parsed.message}], details: goalDetails(core.state.goal) };
+			maxCostUsd = parsed.value;
+		}
 		const { objective: cleanedObjective, verificationContract } = extractVerificationContract(objective);
 		core.replaceGoal(
-			{ objective: cleanedObjective, autoContinue: true, sisyphus: sisyphusFlag },
+			{ objective: cleanedObjective, autoContinue: true, sisyphus: sisyphusFlag, maxCostUsd },
 			ctx,
 			true,
 			verificationContract,
@@ -223,7 +234,7 @@ pi.registerTool(defineTool({
 			? `\n\nThe objective contains ${derived.length} ordered step${derived.length === 1 ? "" : "s"}; propose them as the task tree with set_goal_tasks if the user wants tracked milestones.`
 			: "";
 		return {
-			content: [{ type: "text", text: `${buildGoalCreatedReport({ objective: created?.objective ?? objective, detailedSummary: detailedSummary(created), tokenBudget: created?.tokenBudget })}${bootstrapLine}${otherLine}` }],
+			content: [{ type: "text", text: `${buildGoalCreatedReport({ objective: created?.objective ?? objective, detailedSummary: detailedSummary(created), tokenBudget: created?.tokenBudget, maxCostUsd: created?.maxCostUsd, costUsedUsd: created?.usage.costUsd })}${bootstrapLine}${otherLine}` }],
 			details: goalDetails(created),
 			terminate: true,
 		};

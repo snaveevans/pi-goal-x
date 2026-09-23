@@ -15,6 +15,7 @@
     ".tests/goal-context-usage.test.ts",
     ".tests/goal-core-tools.test.ts",
     ".tests/goal-core.test.ts",
+    ".tests/goal-cost-budget.test.ts",
     ".tests/goal-dashboard-golden.test.ts",
     ".tests/goal-dashboard-model.test.ts",
     ".tests/goal-deferred-archival.test.ts",

@@ -53,6 +53,27 @@ Use the existing tweak flow: `/goal-tweak remove the token budget` or `/goal-twe
 
 After confirmation, a goal stopped only by its budget can continue if the revised limit allows it and scheduling permits. A still-exhausted budget keeps it stopped. Other-session ownership, interrupted execution and exhausted autonomous-run allowances still require their existing recovery steps. Creation and tweak results always show the effective budget.
 
+## Per-goal estimated USD limit (`--max-cost`)
+
+Put `--max-cost` **before** the objective when starting a goal. It is a Pi slash-command argument, **not** a `pi` process flag:
+
+```text
+/goal --max-cost 5.00 Add CSV export with tests
+/sisyphus --max-cost 5.00 Migrate authentication in the specified order
+/goal-direct --max-cost 5.00 Add CSV export with tests
+/sisyphus-direct --max-cost 5.00 1. Add tests. 2. Migrate. 3. Verify.
+```
+
+The amount is USD, in whole cents (for example, `5`, `5.00`, or `0.01`); zero, negative, fractional-cent, missing, and malformed values are rejected **before** starting a draft or creating a goal. Omit the flag for no cost limit. A model/agent calling `create_goal` can pass `max_cost_usd` **only when explicitly requested by the user**. During guided creation, `propose_goal_draft(max_cost_usd)` can also set a user-requested cap; an explicitly supplied `--max-cost` cannot be silently changed by the agent. Cost limits do not change the existing independent `token_budget` or `maxAutonomousRuns` controls; the first exhausted limit stops automatic goal work.
+
+The estimate starts with the **first guided-drafting model response**, including clarification and the final proposal/confirmation response. It is saved in the session's draft entries across `/reload`/resume, displayed by `/goal-status` and the confirmation preview, then transferred to the goal file on confirmation. When a draft reaches its limit, drafting stops without creating a goal; starting another draft is a **new** goal with a new limit and does not retroactively count a discarded draft. A direct goal starts at $0. Pi's completed assistant responses during goal execution (including cached input and output), model usage explicitly reported by other tools, Pi compaction summaries, background cache-warming usage entries observed in the goal session, and each model response by the independent completion auditor all contribute to the goal's cumulative `usage.costUsd`. An auditor that hits the limit stops without accepting completion or offering the user-aborted-audit bypass. A paused or budget-limited goal's tweak conversation also adds to that goal's estimated usage.
+
+`/goal-status` and `get_goal` show the estimated USD amount and cap. The dashboard also shows the USD gauge when set. Warnings appear after crossing 50%, 75%, and 90% during active work. The goal enters `budget_limited` at or above its cap, cancels pending automatic continuations, and receives a one-time wrap-up instruction. To adjust an existing goal without resetting spent cost, use `/goal-tweak set the max cost to $10.00` or `/goal-tweak remove the max cost`; the proposal shows the current and new limits and requires confirmation. `/goal-resume` alone cannot override an exhausted limit. The existing token budget and token usage are retained if only the USD limit changes.
+
+**How it is estimated:** Pi's finalized `usage.cost.total` comes from its model catalog rates (USD per million tokens), applied to the provider's reported uncached input, output, cache-read, and cache-write usage, including tiered pricing. No pricing table is copied into pi-goal-x. For GitHub Copilot, check the catalog's rates against [GitHub's current published per-token rates](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing) when financial accuracy matters. Pi's rates can lag, and your Copilot plan's included credits/allowances affect the *actual* invoice. A missing or zero-priced response with nonzero usage on a capped goal pauses execution rather than assuming it was free; for a draft, it stops drafting.
+
+**This is not a hard billing limit.** Actual usage is known only after each model response, so a single large response can overshoot substantially. Concurrent sessions can race, and a background charge not observed by this extension before the session closes, manual branch summaries, or extension-started requests that do not report tool usage may not be attributed to the goal. The cap does not prevent manual non-goal work, and it cannot enforce a Copilot organization-level spending limit. For a real billing ceiling, also use the provider's own budget controls. `--max-cost` is a best-effort limit on automatically continued work attributable to this goal.
+
 ## Optional arguments on Responses-compatible providers
 
 Some Pi `openai-responses` configurations omit the wire-level `strict` flag. OpenAI Responses may normalize schemas into strict mode when that flag is omitted. This can conflict with optional goal arguments; it is separate from pi-goal-x's `strictExecutionContract` scheduling setting.

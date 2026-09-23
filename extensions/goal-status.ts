@@ -167,6 +167,11 @@ function buildHealthStatus(options: GoalStatusTextOptions, width: number): strin
 		});
 	}
 
+	if (goal.maxCostUsd !== undefined) {
+		const used = goal.usage.costUsd ?? 0;
+		checks.push({label: "Estimated USD cost", value: `$${used.toFixed(4)} / $${goal.maxCostUsd.toFixed(2)} (${Math.round(used / goal.maxCostUsd * 100)}%)`, severity: used >= goal.maxCostUsd || used / goal.maxCostUsd >= 0.9 ? "warn" : "ok"});
+	}
+
 	const overall = checks.some((check) => check.severity === "error") ? "ERROR" : checks.some((check) => check.severity === "warn") ? "WARN" : "OK";
 	const lines = [`Goal health: ${overall}`, `Goal: ${truncateText(goal.objective, Math.max(20, width - 12))}`];
 	for (const check of checks) lines.push(`${check.severity === "error" ? "ERROR" : check.severity === "warn" ? "WARN" : "OK"} ${check.label}: ${check.value}`);
@@ -228,6 +233,7 @@ function buildVerboseStatus(goal: GoalRecord, model: ReturnType<typeof deriveGoa
 	if (model?.budget) {
 		lines.push(`Budget: ${formatCompactTokens(model.budget.used)} / ${formatCompactTokens(model.budget.total)} · ${model.budget.percentage}% used · ${formatCompactTokens(model.budget.remaining)} remaining`);
 	}
+	if (model?.costBudget) lines.push(`Estimated USD cost: $${model.costBudget.used.toFixed(4)} / $${model.costBudget.total.toFixed(2)} · ${model.costBudget.percentage}% used · $${model.costBudget.remaining.toFixed(4)} remaining (Pi model pricing; not a billing guarantee)`);
 	if (goal.pauseReason) lines.push(`Pause/blocker: ${goal.pauseReason}`);
 	if (goal.pauseSuggestedAction) lines.push(`Suggested action: ${goal.pauseSuggestedAction}`);
 	if (goal.activePath) lines.push(`File: ${goal.activePath}`);

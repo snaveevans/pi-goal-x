@@ -15,6 +15,7 @@ import {
 import type { GoalRecord, GoalTask, GoalTaskList } from "./goal-record.ts";
 import { countTaskSubtree } from "./goal-task-count.ts";
 import { loadGoalSettings, type GoalSettings, type ThinkingLevel } from "./goal-settings.ts";
+import { assistantTurnCostUsd } from "./goal-format.ts";
 import { statusLabel } from "./goal-core.ts";
 
 export interface AuditorProgress {
@@ -44,6 +45,7 @@ export interface GoalAuditorResult {
 	output: string;
 	model?: string;
 	thinkingLevel?: ThinkingLevel;
+	costUsd?: number;
 	error?: string;
 }
 
@@ -160,7 +162,8 @@ function minimalGoalMetadata(goal: GoalRecord): string {
 		`Goal id: ${goal.id}`,
 		`Status: ${statusLabel(goal)}`,
 		`Mode: ${goal.sisyphus ? "sisyphus" : "regular"}`,
-		goal.tokenBudget ? `Lifetime spending cap: ${goal.tokenBudget} tokens (${goal.usage.tokensUsed} cumulatively used; not context occupancy)` : undefined,
+		goal.tokenBudget ? `Lifetime token cap: ${goal.tokenBudget} tokens (${goal.usage.tokensUsed} cumulatively used; not context occupancy)` : undefined,
+		goal.maxCostUsd ? `Estimated USD cap: $${goal.maxCostUsd.toFixed(2)} ($${(goal.usage.costUsd ?? 0).toFixed(4)} already used including drafting)` : undefined,
 	].filter(Boolean).join("\n");
 }
 
@@ -313,6 +316,8 @@ export async function runGoalCompletionAuditor(args: {
 	warmContext?: string | null;
 	signal?: AbortSignal;
 	onProgress?: AuditorProgressCallback;
+	/** Called once per nested auditor response. Returning false stops the audit. */
+	onCost?: (costUsd: number | null) => boolean;
 	/**
 	 * Optional factory for creating the auditor agent session.
 	 * Exposed for testing so a mock/controllable session can be injected.
@@ -325,6 +330,8 @@ export async function runGoalCompletionAuditor(args: {
 	const model = resolved.model;
 	const thinkingLevel = config.thinkingLevel;
 	const outputParts: string[] = [];
+	let costUsd = 0;
+	let costLimited = false;
 	let outputTail: string[] = [];
 	if (resolved.error) {
 		return { approved: false, disapproved: true, output: "", model: modelLabel(model), thinkingLevel, error: resolved.error };
@@ -421,6 +428,12 @@ export async function runGoalCompletionAuditor(args: {
 			if (event.type !== "message_end") return;
 			const message = event.message as { role?: string; content?: Array<{ type?: string; text?: string }> };
 			if (message.role !== "assistant") return;
+			const estimatedCost = assistantTurnCostUsd(message);
+			if (estimatedCost !== null) costUsd += estimatedCost;
+			if (args.onCost && !args.onCost(estimatedCost === 0 && Number((message as {usage?: {totalTokens?: number}}).usage?.totalTokens ?? 0) > 0 ? null : estimatedCost)) {
+				costLimited = true;
+				void session.abort();
+			}
 			for (const part of message.content ?? []) {
 				if (part.type === "text" && typeof part.text === "string") {
 					outputParts.push(part.text);
@@ -462,6 +475,7 @@ export async function runGoalCompletionAuditor(args: {
 		// whatever output was captured before the abort. Check the signal after
 		// prompt completes and treat any abort as auditor-aborted regardless of
 		// whether an exception propagated.
+		if (costLimited) return {approved: false, disapproved: true, output: outputParts.join("\n\n").trim(), model: modelLabel(model), thinkingLevel, costUsd, error: "Estimated cost limit reached."};
 		if (args.signal?.aborted) {
 			return {
 				approved: false,
@@ -474,7 +488,7 @@ export async function runGoalCompletionAuditor(args: {
 		}
 		const output = outputParts.join("\n\n").trim();
 		const decision = parseAuditorDecision(output);
-		return { ...decision, output, model: modelLabel(model), thinkingLevel };
+		return { ...decision, output, model: modelLabel(model), thinkingLevel, costUsd };
 	} catch (error) {
 		const isAborted = args.signal?.aborted || (error instanceof Error && error.name === "AbortError");
 		return {
@@ -483,7 +497,8 @@ export async function runGoalCompletionAuditor(args: {
 			output: outputParts.join("\n\n").trim(),
 			model: modelLabel(model),
 			thinkingLevel,
-			error: isAborted ? "Auditor aborted." : (error instanceof Error ? error.message : String(error)),
+			costUsd,
+			error: costLimited ? "Estimated cost limit reached." : isAborted ? "Auditor aborted." : (error instanceof Error ? error.message : String(error)),
 		};
 	}
 }

@@ -236,7 +236,7 @@ export function goalPromptParts(goal: GoalRecord, settings?: GoalSettings, conte
 	// omission, so a retained copy would keep issuing a cancelled order.
 	const fixed = cachedPrompt(goal, settings, "goal", () => buildGoalPrompt(goal, settings));
 	const { runs, instructions } = schedulerSummaryParts(goal.scheduler, settings?.maxAutonomousRuns);
-	const limits = `Limits: lifetime tokens=${goal.tokenBudget ?? "none"}; runs=${settings?.maxAutonomousRuns ?? "unlimited"}.`;
+	const limits = `Limits: lifetime tokens=${goal.tokenBudget ?? "none"}; runs=${settings?.maxAutonomousRuns ?? "unlimited"}.${goal.maxCostUsd === undefined ? "" : ` Estimated USD cap=$${goal.maxCostUsd.toFixed(2)} (Pi model-catalog estimate, not a billing-account guarantee). Stop new goal work when either limit is reached.`}`;
 	const state = [fixed, instructions, limits, "Usage spans goal turns, not context. Latest snapshot supersedes earlier snapshots."].filter(Boolean).join("\n");
 	const counters = `Goal snapshot: ${formatUsage(goal)}\n${contextUsageLine(contextUsage)}\n${runs}`;
 	return { state, counters };
@@ -315,5 +315,6 @@ function formatUsage(goal: GoalRecord): string {
 		bits.push(`${Math.floor(s / 60)}m${s % 60}s`);
 	}
 	if (goal.usage.tokensUsed > 0) bits.push(`${goal.usage.tokensUsed} tokens`);
+	if (goal.maxCostUsd !== undefined) bits.push(`estimated $${(goal.usage.costUsd ?? 0).toFixed(4)} / $${goal.maxCostUsd.toFixed(2)} USD`);
 	return bits.length > 0 ? bits.join(" · ") : "none";
 }

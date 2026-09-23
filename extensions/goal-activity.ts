@@ -79,6 +79,8 @@ function mapEvent(event: GoalLedgerEvent, taskTitles: ReadonlyMap<string, string
 			};
 		case "goal_budget_limited":
 			return { at: event.at, kind: "goal", text: "Reached the configured token budget." };
+		case "goal_cost_budget_limited":
+			return { at: event.at, kind: "goal", text: "Reached the estimated USD cost limit." };
 		case "goal_completed":
 			return { at: event.at, kind: "goal", text: "Completed the goal." };
 		case "goal_aborted":
@@ -129,6 +131,8 @@ function mapEvent(event: GoalLedgerEvent, taskTitles: ReadonlyMap<string, string
 		case "goal_unfocused":
 		case "goal_stalled":
 		case "goal_budget_warning":
+		case "goal_cost_budget_changed":
+		case "goal_budget_changed":
 		case "task_list_set":
 			return undefined;
 		default:
@@ -150,7 +154,7 @@ export function activityEventKey(event: GoalLedgerEvent): string | undefined {
 
 const activityTypes = new Set([
  "goal_created", "goal_tweaked", "auditor_toggled", "goal_paused", "goal_resumed", "goal_blocked",
- "goal_budget_limited", "goal_completed", "goal_aborted", "task_started", "task_complete", "task_skipped",
+ "goal_budget_limited", "goal_cost_budget_limited", "goal_completed", "goal_aborted", "task_started", "task_complete", "task_skipped",
  "task_reopened", "completion_requested", "audit_started", "audit_result", "audit_skipped", "goal_archived",
 ]);
 export function isActivityEvent(event: GoalLedgerEvent): boolean { return activityTypes.has(event.type); }

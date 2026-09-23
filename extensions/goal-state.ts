@@ -8,7 +8,7 @@ import {
 	DRAFTING_GOAL_TOOLS,
 	applicableGoalTools,
 } from "./goal-tool-names.ts";
-import { budgetReached } from "./goal-accounting.ts";
+import { budgetReached, costBudgetReached, costBudgetLine, tokenBudgetReached } from "./goal-accounting.ts";
 import {
 	asRecord,
 	cloneGoal,
@@ -116,7 +116,9 @@ export interface GoalCore {
 	removeFocusedGoal(ctx: ExtensionContext, reason: GoalFocusReason): void;
 	beginAccounting(): void;
 	goalForDisplay(): GoalRecord | null;
-	accountProgress(ctx: ExtensionContext, opts?: { completedTurnTokens?: number }): void;
+	accountProgress(ctx: ExtensionContext, opts?: { completedTurnTokens?: number; completedTurnCostUsd?: number }): void;
+	chargeGoalCost(ctx: ExtensionContext, costUsd: number, goalId?: string): void;
+	pauseForUnknownCost(ctx: ExtensionContext): void;
 	syncGoalPromptFromDisk(ctx: ExtensionContext): boolean;
 	persist(ctx?: ExtensionContext): void;
 	refreshGoalDisplayFromDisk(ctx: ExtensionContext): void;
@@ -481,7 +483,7 @@ export function createGoalCore(
 		return liveDisplayGoal(state.goal, accounting);
 	}
 
-	function accountProgress(ctx: ExtensionContext, opts: { completedTurnTokens?: number } = {}): void {
+	function accountProgress(ctx: ExtensionContext, opts: { completedTurnTokens?: number; completedTurnCostUsd?: number } = {}): void {
 		// Skip disk reconciliation for complete goals — they are pending archival at turn_end.
 		if (state.goal?.activePath && state.goal?.status !== "complete" && !reconcileFocusedGoalFromDisk(ctx, { preserveMemoryUsage: true })) return;
 		if (!state.goal || state.goal.status !== "active" || !accounting.isActiveFor(state.goal.id)) {
@@ -491,11 +493,13 @@ export function createGoalCore(
 
 		// Serialized idempotent charge: never double-charges the same interval.
 		const { tokens, seconds } = accounting.charge({ completedTurnTokens: opts.completedTurnTokens });
-		if (tokens === 0 && seconds === 0) return;
+		const costUsd = opts.completedTurnCostUsd ?? 0;
+		if (tokens === 0 && seconds === 0 && costUsd === 0) return;
 
 		const next = cloneGoal(state.goal);
 		next.usage.tokensUsed += tokens;
 		next.usage.activeSeconds += seconds;
+		next.usage.costUsd = (next.usage.costUsd ?? 0) + costUsd;
 		next.updatedAt = nowIso();
 		state.goal = next;
 		persist(ctx);
@@ -514,21 +518,20 @@ export function createGoalCore(
 			}
 		}
 
-		// Token-budget transition: when accounted usage reaches the budget, mark the
-		// goal budget_limited exactly once (status no longer active, so accounting
-		// stops and the transition cannot re-fire), emit the ledger event, arm the
-		// one-time wrap-up steering, and cancel pending continuations.
-		if (budgetGoal && budgetGoal.status === "active" && typeof budgetGoal.tokenBudget === "number" && budgetReached(budgetGoal)) {
+		if (budgetGoal && budgetGoal.status === "active" && typeof budgetGoal.maxCostUsd === "number") {
+			const pct = (budgetGoal.usage.costUsd ?? 0) / budgetGoal.maxCostUsd;
+			const crossed = [0.5, 0.75, 0.9].filter(threshold => pct >= threshold && !costWarningsFired.has(`${budgetGoal.id}:${budgetGoal.maxCostUsd}:${threshold}`));
+			for (const threshold of crossed) costWarningsFired.add(`${budgetGoal.id}:${budgetGoal.maxCostUsd}:${threshold}`);
+			if (crossed.length) ctx.ui.notify(`Estimated cost ${Math.round(pct * 100)}% of the $${budgetGoal.maxCostUsd.toFixed(2)} limit. Use /goal-tweak to change it.`, "warning");
+		}
+		if (budgetGoal && budgetGoal.status === "active" && budgetReached(budgetGoal)) {
 			const transition = goalService.apply(ctx, {
 				reconcile: false,
 				mutate: (g) => ({ ...g, status: "budget_limited" as const, updatedAt: nowIso() }),
-				ledger: (written) => [{
-					type: "goal_budget_limited",
-					goalId: written.id,
-					budget: budgetGoal.tokenBudget ?? 0,
-					tokensUsed: written.usage.tokensUsed,
-					at: written.updatedAt,
-				}],
+				ledger: (written) => [
+					...(tokenBudgetReached(written) ? [{type: "goal_budget_limited" as const, goalId: written.id, budget: written.tokenBudget!, tokensUsed: written.usage.tokensUsed, at: written.updatedAt}] : []),
+					...(costBudgetReached(written) ? [{type: "goal_cost_budget_limited" as const, goalId: written.id, maxCostUsd: written.maxCostUsd!, costUsedUsd: written.usage.costUsd ?? 0, at: written.updatedAt}] : []),
+				],
 			});
 			if (transition.ok) {
 				runtime.armPostBudgetReminder();
@@ -537,6 +540,43 @@ export function createGoalCore(
 				updateUI(ctx);
 			}
 		}
+	}
+
+	function chargeGoalCost(ctx: ExtensionContext, costUsd: number, goalId?: string): void {
+		if (!Number.isFinite(costUsd) || costUsd <= 0 || !state.goal || (goalId && state.goal.id !== goalId)) return;
+		if (state.goal.status === "active") {
+			if (!accounting.isActiveFor(state.goal.id)) accounting.begin(state.goal.id);
+			accountProgress(ctx, {completedTurnCostUsd: costUsd});
+			return;
+		}
+		// Draft tweaks of paused goals and the final assistant turn of a completed
+		// goal still cost money. Completed goals keep deferred archival unchanged.
+		let newlyLimited = false;
+		const result = goalService.apply(ctx, {
+			reconcile: false,
+			mutate: goal => {
+				const usage = {...goal.usage, costUsd: (goal.usage.costUsd ?? 0) + costUsd};
+				newlyLimited = goal.status !== "complete" && goal.status !== "budget_limited" && costBudgetReached({...goal, usage});
+				return {...goal, usage, status: newlyLimited ? "budget_limited" : goal.status, updatedAt: nowIso()};
+			},
+			ledger: written => newlyLimited ? [{type: "goal_cost_budget_limited", goalId: written.id, maxCostUsd: written.maxCostUsd!, costUsedUsd: written.usage.costUsd ?? 0, at: written.updatedAt}] : [],
+		});
+		if (result.ok && newlyLimited) {
+			runtime.armPostBudgetReminder();
+			runtime.clearContinuationState();
+			accounting.clear();
+		}
+		if (result.ok) updateUI(ctx);
+	}
+
+	function pauseForUnknownCost(ctx: ExtensionContext): void {
+		if (!state.goal || state.goal.status !== "active") return;
+		goalService.apply(ctx, {reconcile: false, mutate: goal => ({...goal, status: "paused", autoContinue: false, stopReason: "agent", pauseReason: "Pi did not report usable cost for a model response; USD cap cannot be enforced.", updatedAt: nowIso()})});
+		runtime.clearContinuationState();
+		scheduler.cancelTimer();
+		clearActiveAccounting();
+		updateUI(ctx);
+		ctx.ui.notify("Goal paused: Pi did not report usable cost; refusing to run without a reliable USD estimate.", "warning");
 	}
 
 	function syncGoalPromptFromDisk(ctx: ExtensionContext): boolean {
@@ -602,6 +642,7 @@ export function createGoalCore(
 
 	let lastGoalActivityAt = Date.now();
 	let stallNotified = false;
+	const costWarningsFired = new Set<string>();
 	const budgetWarningsFired = new Set<string>(); // "goalId:budget:threshold"
 
 	function touchGoalActivity(): void {
@@ -896,6 +937,8 @@ export function createGoalCore(
 		if (verificationContract) goal.verificationContract = verificationContract;
 		if (config.taskList) goal.taskList = config.taskList;
 		if (typeof tokenBudget === "number" && tokenBudget > 0) goal.tokenBudget = Math.floor(tokenBudget);
+		if (config.maxCostUsd !== undefined) goal.maxCostUsd = config.maxCostUsd;
+		if (config.initialCostUsd !== undefined) goal.usage.costUsd = config.initialCostUsd;
 		const result = goalService.create(ctx, {
 			goal,
 		ledger: [
@@ -918,7 +961,7 @@ export function createGoalCore(
 		});
 		if (result.focusChanged) appendFocusEntry(result.goalId, "created");
 		beginAccounting();
-		ctx.ui.notify(`${buildGoalRunningNotification(config)}\nBudget: ${goal.tokenBudget === undefined ? "none" : `${goal.tokenBudget} tokens`}`, "info");
+		ctx.ui.notify(`${buildGoalRunningNotification(config)}\nBudget: ${goal.tokenBudget === undefined ? "none" : `${goal.tokenBudget} tokens`}${costBudgetLine(goal) ? `\n${costBudgetLine(goal)}` : ""}`, "info");
 		if (startNow && state.goal?.autoContinue) scheduler.kickoff(ctx);
 	}
 
@@ -1050,6 +1093,8 @@ export function createGoalCore(
 		beginAccounting,
 		goalForDisplay,
 		accountProgress,
+		chargeGoalCost,
+		pauseForUnknownCost,
 		syncGoalPromptFromDisk,
 		persist,
 		refreshGoalDisplayFromDisk,

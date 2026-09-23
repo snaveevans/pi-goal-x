@@ -242,7 +242,7 @@ The `tool_call` interceptor blocks work tools after a stop tool has fired in
 the same turn, and blocks work tools when the checkpoint that triggered the
 turn is no longer actionable (stale checkpoint).
 
-## Accounting, runtime, and token budgets
+## Accounting, runtime, and token/estimated-USD budgets
 
 `GoalAccounting` (goal-accounting.ts) charges serialized, idempotent
 token/time intervals per turn; a goal never double-charges the same interval.
@@ -255,6 +255,23 @@ reaches the budget, `accountProgress` transitions the goal to the distinct
 stops and the transition cannot re-fire), emits a `goal_budget_limited` ledger
 event, arms the one-time wrap-up steering, and cancels pending continuations.
 `budget_limited` never implies completion.
+
+The opt-in `--max-cost` cap is stored as `GoalRecord.maxCostUsd`; cumulative
+`GoalRecord.usage.costUsd` stores Pi's estimated USD cost, without rounding on
+accumulation. `turn_end` attributes finalized assistant `usage.cost.total` and
+tool-reported nested usage. Draft-session custom entries record pre-confirmation
+cost, which transfers into the created goal and survives reloads. Nested
+completion-auditor `message_end` events charge their own model calls to the
+parent goal before approval; reaching the cap aborts the auditor and cannot be
+interpreted as the user's audit bypass. `session_compact` charges the compaction
+summary when Pi reports its usage. Session `usage` entries (e.g. cache warming)
+are charged as the extension observes them at turn, settle, or shutdown
+boundaries. Both cost and token caps use the same
+`budget_limited` lifecycle, while separate ledger events identify the cause.
+GoalService's additive usage merge includes cost on revision conflicts. The
+price estimate is not the actual GitHub Copilot invoice; read
+[advanced usage](advanced-usage.md#per-goal-estimated-usd-limit---max-cost)
+for billing, exclusions, and overshoot boundaries.
 
 ## Completion output
 

@@ -319,6 +319,11 @@ export function renderCompactDashboard(
 		lines.push(boxLine(theme, safeWidth, `${theme.fg(fuel as RenderColor, "⛽")} ${muted(theme, "Budget")} ${theme.fg(fuel as RenderColor, formatBudget(model.budget.used, model.budget.total))}`));
 	}
 
+	if (model.costBudget) {
+		const fuel = model.costBudget.used >= model.costBudget.total ? "error" : "mdHeading";
+		lines.push(boxLine(theme, safeWidth, `${theme.fg(fuel as RenderColor, "⛽")} ${muted(theme, "Est. cost")} ${theme.fg(fuel as RenderColor, `$${model.costBudget.used.toFixed(4)} / $${model.costBudget.total.toFixed(2)} · ${model.costBudget.percentage}%`)}`));
+	}
+
 	// §auditor-toggle: the focused goal's independent-auditor status is the
 	// bottom-right border dot (green on / muted gray off, see the footer
 	// below); wide/medium footers right-align a note next to it explaining
@@ -464,6 +469,9 @@ export function renderExpandedDashboard(
 	}
 	if (model.budget) {
 		lines.push(boxLine(theme, safeWidth, `${theme.fg("mdHeading", "⛽")} ${muted(theme, `Budget ${formatBudget(model.budget.used, model.budget.total)}`)}`));
+	}
+	if (model.costBudget) {
+		lines.push(boxLine(theme, safeWidth, `${theme.fg("mdHeading", "⛽")} ${muted(theme, `Est. cost $${model.costBudget.used.toFixed(4)} / $${model.costBudget.total.toFixed(2)} · ${model.costBudget.percentage}%`)}`));
 	}
 
 	// Progress section (§4.2).

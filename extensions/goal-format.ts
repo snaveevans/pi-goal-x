@@ -40,6 +40,7 @@ export function usageLines(goal: GoalRecord): string[] {
 	return [
 		`Time spent: ${formatDuration(goal.usage.activeSeconds)}`,
 		`Tokens used: ${formatTokenValue(goal.usage.tokensUsed)}`,
+		...(goal.maxCostUsd === undefined ? [] : [`Estimated cost: $${(goal.usage.costUsd ?? 0).toFixed(4)} / $${goal.maxCostUsd.toFixed(2)} USD`]),
 	];
 }
 
@@ -305,6 +306,15 @@ export function assistantTurnTokens(message: unknown): number {
 	const usage = asRecord(raw.usage);
 	if (!usage) return 0;
 	return usageChannelTokens(usage.input) + usageChannelTokens(usage.output);
+}
+
+export function assistantTurnCostUsd(message: unknown): number | null {
+	const raw = asRecord(message);
+	if (raw?.role !== "assistant") return null;
+	const usage = asRecord(raw.usage);
+	const cost = asRecord(usage?.cost);
+	const total = cost?.total;
+	return typeof total === "number" && Number.isFinite(total) && total >= 0 ? total : null;
 }
 
 export function isMeaningfulProgressToolCall(toolName: string, args: unknown): boolean {

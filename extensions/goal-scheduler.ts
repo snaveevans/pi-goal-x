@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ExtensionContext, AgentToolResult } from "@earendil-works/pi-coding-agent";
 import type { GoalCore } from "./goal-state.ts";
 import { asRecord, type GoalRecord } from "./goal-record.ts";
-import { budgetReached } from "./goal-accounting.ts";
+import { budgetReached, costBudgetReached } from "./goal-accounting.ts";
 import { loadGoalSettings, invalidateGoalSettingsCache } from "./goal-settings.ts";
 import { newGoalScheduler, schedulerSummary, type GoalContinuation, type GoalSchedulerState } from "./goal-scheduler-state.ts";
 
@@ -121,7 +121,7 @@ export class GoalScheduler {
 			this.cancelTimer();
 			this.core.runtime.clearContinuationState();
 			this.write(ctx, g => {
-				if (g.status === "complete" || budgetReached(g)) throw new Error("A completed or token-budget-limited goal cannot resume.");
+				if (g.status === "complete" || budgetReached(g)) throw new Error("A completed or budget-limited goal cannot resume. Raise or remove the applicable limit with /goal-tweak.");
 				return { ...g, status: "active", autoContinue: true, stopReason: undefined, pauseReason: undefined, pauseSuggestedAction: undefined,
 					scheduler: { ...newGoalScheduler(this.owner(ctx)), phase: "ready", decision: { kind: "ready", nextAction: "Continue the goal at the user's request.", purpose: "kickoff" } } };
 			});
@@ -281,7 +281,7 @@ export class GoalScheduler {
 				s = this.update(ctx, state => this.implicitReady(state)).scheduler!;
 			}
 			if (!["ready", "waiting"].includes(s.phase)) return;
-			if (budgetReached(g)) { this.pause(ctx, "Goal token budget exhausted."); return; }
+			if (budgetReached(g)) { this.pause(ctx, costBudgetReached(g) ? "Goal estimated USD cost limit exhausted." : "Goal token budget exhausted."); return; }
 			if (!this.available(ctx, s)) { this.pause(ctx, this.allowanceReason(ctx)); return; }
 			// Recovery and repair retain the wait while changing phase to ready.
 			if (s.wait && Date.now() >= s.wait.deadline) { this.pause(ctx, "Wait deadline reached."); return; }

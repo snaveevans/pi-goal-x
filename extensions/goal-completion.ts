@@ -8,6 +8,7 @@ import {
 } from "./goal-policy.ts";
 import { loadGoalSettings, loadGoalSettingsFileConfig } from "./goal-settings.ts";
 import { runGoalCompletionAuditor } from "./goal-auditor.ts";
+import { budgetReached, costBudgetReached } from "./goal-accounting.ts";
 import { nowIso, type GoalRecord } from "./goal-record.ts";
 import { latestEventsForGoal, latestAuditorResultForGoal, goalRuntimeEvents } from "./goal-ledger.ts";
 import { mergeGoalPromptFromDisk } from "./storage/goal-files.ts";
@@ -95,7 +96,7 @@ function commitGoalCompletion(core: GoalCore, ctx: ExtensionContext, opts: {
 		completeResult = core.goalService.apply(ctx, {
 			reconcile: false,
 			focusToken: opts.completionFocus,
-			mutate: () => ({ ...opts.goal, status: "complete" as const, stopReason: "agent" as const, updatedAt: nowIso() }),
+			mutate: goal => ({ ...opts.goal, usage: goal.usage, status: "complete" as const, stopReason: "agent" as const, updatedAt: nowIso() }),
 		});
 	} catch (err) {
 		// The authoritative file write throws on failure; surface it as a typed
@@ -187,6 +188,7 @@ if (settings.disabled === true) {
 }
 
 	// Auditor is enabled — run the normal audit flow
+	if (budgetReached(core.state.goal ?? auditTarget)) return {content: [{type: "text", text: "Goal budget reached; cannot start a completion audit. Use /goal-tweak to raise the limit."}], details: goalDetails(core.state.goal), terminate: true};
 	core.auditMessages.enqueue(ctx, {
 		customType: GOAL_AUDIT_ENTRY,
 		content: [
@@ -249,6 +251,7 @@ if (settings.disabled === true) {
 
 	if (previousAudit?.verdict === "disapproved") warmContext = `${warmContext ?? ""}\nPrevious rejection (verify whether resolved): ${previousAudit.report.slice(0, 600)}`;
 
+	let costChargedByCallback = 0;
 	const auditor = await (core.dependencies.runCompletionAuditor ?? runGoalCompletionAuditor)({
 		ctx,
 		goal: auditTarget,
@@ -257,6 +260,11 @@ if (settings.disabled === true) {
 		settings: loadGoalSettings(ctx.cwd),
 		warmContext,
 		signal: completionAuditController.signal,
+		onCost: cost => {
+			if (cost === null && core.state.goal?.maxCostUsd !== undefined) {core.pauseForUnknownCost(ctx); return false;}
+			if (cost !== null) {costChargedByCallback += cost; core.chargeGoalCost(ctx, cost, auditTarget.id);}
+			return core.state.goal?.status === "active" && !costBudgetReached(core.state.goal);
+		},
 		onProgress: (progress) => {
 			core.auditProgress = {
 				...progress,
@@ -265,6 +273,7 @@ if (settings.disabled === true) {
 			core.goalWidgetComponentRef.current?.invalidate();
 		},
 	});
+	if (costChargedByCallback === 0 && auditor.costUsd) core.chargeGoalCost(ctx, auditor.costUsd, auditTarget.id);
 	// Clear abort controller — audit finished on its own
 	if (core.auditAbortController === completionAuditController) core.auditAbortController = null;
 	// Clear auditor progress display
@@ -273,6 +282,11 @@ if (settings.disabled === true) {
 		core.auditProgress = null;
 		core.goalWidgetComponentRef.current?.invalidate();
 		return core.focusedOperationCancelledResult("Goal completion", completionFocus);
+	}
+	if (auditor.error === "Estimated cost limit reached." || core.state.goal?.status === "budget_limited" || core.state.goal?.pauseReason?.includes("USD cap cannot be enforced")) {
+		core.auditProgress = null;
+		core.updateUI(ctx);
+		return {content: [{type: "text", text: "Independent audit stopped: the estimated USD cost limit was reached or pricing is unavailable. The goal was not completed. Use /goal-tweak to raise/remove the limit before retrying."}], details: goalDetails(core.state.goal), terminate: true};
 	}
 
 	// If the audit was aborted by the user (Esc), show a TUI dialog letting

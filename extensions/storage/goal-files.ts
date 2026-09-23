@@ -360,7 +360,7 @@ ${goal.objective.trim()}
 - Auto-continue: ${goal.autoContinue ? "on" : "off"}
 - Sisyphus mode: ${goal.sisyphus ? "yes (prompt/criteria style)" : "no"}
 - Time spent: ${formatDuration(goal.usage.activeSeconds)}
-- Tokens used: ${formatTokenValue(goal.usage.tokensUsed)}${contractLine}${taskSection}${pauseBlock}
+- Tokens used: ${formatTokenValue(goal.usage.tokensUsed)}${goal.maxCostUsd === undefined ? "" : `\n- Estimated USD cost: $${(goal.usage.costUsd ?? 0).toFixed(4)} / $${goal.maxCostUsd.toFixed(2)}`}${contractLine}${taskSection}${pauseBlock}
 `;
 }
 

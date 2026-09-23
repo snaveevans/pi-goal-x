@@ -4,6 +4,10 @@ All notable changes to pi-goal-x are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in `/goal --max-cost 5.00` estimated USD cap (also direct/Sisyphus and `create_goal`), including guided drafting, goal work and nested completion audits. Persist cost across sessions, show it in status/dashboard, and allow confirmed `/goal-tweak` changes. The cap uses Pi's model pricing estimates; a completed request may overshoot it.
+
 ## [0.31.8] — 2026-09-22
 
 ### Documentation

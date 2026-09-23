@@ -155,7 +155,7 @@ export class GoalService {
 	 * delta since this baseline is merged onto the disk record instead of the
 	 * local usage being dropped.
 	 */
-	private lastPersistedUsage: { goalId: string; tokensUsed: number; activeSeconds: number } | null = null;
+	private lastPersistedUsage: { goalId: string; tokensUsed: number; activeSeconds: number; costUsd: number } | null = null;
 
 	/**
 	 * Per-turn transaction buffer (P1-3): task/status/usage mutations and
@@ -225,7 +225,8 @@ export class GoalService {
     if (freshDisk && this.ref.getFocusedGoalId() === goal.id) {
      const tokens = Math.max(0, goal.usage.tokensUsed - expected.usage.tokensUsed);
      const seconds = Math.max(0, goal.usage.activeSeconds - expected.usage.activeSeconds);
-     this.ref.setFocused({ ...freshDisk, usage: {tokensUsed: freshDisk.usage.tokensUsed + tokens, activeSeconds: freshDisk.usage.activeSeconds + seconds} });
+     const costUsd = Math.max(0, (goal.usage.costUsd ?? 0) - (expected.usage.costUsd ?? 0));
+     this.ref.setFocused({ ...freshDisk, usage: {tokensUsed: freshDisk.usage.tokensUsed + tokens, activeSeconds: freshDisk.usage.activeSeconds + seconds, costUsd: (freshDisk.usage.costUsd ?? 0) + costUsd} });
      this.trackBaseline(freshDisk.id, freshDisk.usage);
     } else if (!freshDisk) {
      this.ref.getPool().delete(goal.id);
@@ -275,7 +276,7 @@ export class GoalService {
 
 	/** Record the usage value the focused goal's in-memory accounting builds on. */
 	private trackBaseline(goalId: string, usage: GoalUsage): void {
-		this.lastPersistedUsage = { goalId, tokensUsed: usage.tokensUsed, activeSeconds: usage.activeSeconds };
+		this.lastPersistedUsage = { goalId, tokensUsed: usage.tokensUsed, activeSeconds: usage.activeSeconds, costUsd: usage.costUsd ?? 0 };
 	}
 
 	/**
@@ -283,13 +284,14 @@ export class GoalService {
 	 * zero so usage is never reduced). Falls back to the disk usage when this
 	 * session has no baseline for the goal (never persisted/reconciled it).
 	 */
-	private usageDelta(current: GoalRecord, disk: GoalRecord): { tokens: number; seconds: number } {
+	private usageDelta(current: GoalRecord, disk: GoalRecord): { tokens: number; seconds: number; costUsd: number } {
 		const baseline = this.lastPersistedUsage?.goalId === current.id
 			? this.lastPersistedUsage
-			: { goalId: current.id, tokensUsed: disk.usage.tokensUsed, activeSeconds: disk.usage.activeSeconds };
+			: { goalId: current.id, tokensUsed: disk.usage.tokensUsed, activeSeconds: disk.usage.activeSeconds, costUsd: disk.usage.costUsd ?? 0 };
 		return {
 			tokens: Math.max(0, current.usage.tokensUsed - baseline.tokensUsed),
 			seconds: Math.max(0, current.usage.activeSeconds - baseline.activeSeconds),
+			costUsd: Math.max(0, (current.usage.costUsd ?? 0) - baseline.costUsd),
 		};
 	}
 
@@ -755,13 +757,14 @@ export class GoalService {
 				// Revision moved concurrently: merge only the additive usage
 				// delta from this session onto the disk record and advance its
 				// revision. All other fields stay authoritative from disk.
-				const { tokens, seconds } = this.usageDelta(current, freshDisk);
-				if (tokens === 0 && seconds === 0) return null;
+				const { tokens, seconds, costUsd } = this.usageDelta(current, freshDisk);
+				if (tokens === 0 && seconds === 0 && costUsd === 0) return null;
 				const merged = mergeGoalPromptFromDisk(ctx, {
 					...freshDisk,
 					usage: {
 						tokensUsed: freshDisk.usage.tokensUsed + tokens,
 						activeSeconds: freshDisk.usage.activeSeconds + seconds,
+						costUsd: (freshDisk.usage.costUsd ?? 0) + costUsd,
 					},
 					updatedAt: nowIso(),
 					revision: (freshDisk.revision ?? 0) + 1,

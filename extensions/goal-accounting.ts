@@ -18,7 +18,8 @@ export interface AccountingCharge {
 
 export interface BudgetLike {
 	tokenBudget?: number;
-	usage: { tokensUsed: number };
+	maxCostUsd?: number;
+	usage: { tokensUsed: number; costUsd?: number };
 }
 
 export class GoalAccounting {
@@ -78,9 +79,22 @@ export function budgetRemaining(goal: BudgetLike): number | null {
 }
 
 /** True when a budget is set and accounted usage has reached it. */
-export function budgetReached(goal: BudgetLike): boolean {
+export function tokenBudgetReached(goal: BudgetLike): boolean {
 	const remaining = budgetRemaining(goal);
 	return remaining !== null && remaining === 0;
+}
+
+export function costBudgetReached(goal: BudgetLike): boolean {
+	return goal.maxCostUsd !== undefined && (goal.usage.costUsd ?? 0) >= goal.maxCostUsd - 1e-9;
+}
+
+/** Either independent limit prevents further automatic goal work. */
+export function budgetReached(goal: BudgetLike): boolean {
+	return tokenBudgetReached(goal) || costBudgetReached(goal);
+}
+
+export function costBudgetLine(goal: BudgetLike): string | null {
+	return goal.maxCostUsd === undefined ? null : `Estimated cost: $${(goal.usage.costUsd ?? 0).toFixed(4)} / $${goal.maxCostUsd.toFixed(2)} USD`;
 }
 
 /** Token-budget description for display/steering text. */

@@ -7,11 +7,12 @@ import { buildDraftConfirmationText, buildProposalSummary, buildTweakConfirmatio
 import { renderConfirmationTasks } from "./goal-task-confirmation.ts";
 import { deriveTasksFromObjective } from "./goal-task-derive.ts";
 import { goalDetails, renderGoalResult } from "./goal-format.ts";
-import { budgetReached } from "./goal-accounting.ts";
+import { budgetReached, costBudgetReached, tokenBudgetReached } from "./goal-accounting.ts";
+import { formatGoalCost } from "./goal-cost.ts";
 import { buildGoalCreatedReport, formatGoalBudget } from "./goal-policy.ts";
 import { loadGoalSettings } from "./goal-settings.ts";
 import { DIALOG_UNAVAILABLE_HINT, proposalDialogFailureMessage, formatQuestionnaireAnswers, runGoalQuestionnaire, shouldAutoConfirmProposal, showProposalDialog, type GoalQuestionnaireQuestion, type ProposalDecision } from "./goal-questionnaire.ts";
-import { currentTaskIdIsPending, nowIso, validateTokenBudgetInput, type GoalRecord, type GoalTaskList } from "./goal-record.ts";
+import { currentTaskIdIsPending, nowIso, validateTokenBudgetInput, validateMaxCostUsd, type GoalRecord, type GoalTaskList } from "./goal-record.ts";
 import type { GoalCore } from "./goal-state.ts";
 import { convertFlatTasks, countTasks, mergeTasksWithExisting, type FlatTaskInput } from "./goal-task-tools.ts";
 import { PROPOSE_DRAFT_TOOL_NAME, QUESTIONNAIRE_TOOL_NAME, QUESTION_TOOL_NAME } from "./goal-tool-names.ts";
@@ -33,6 +34,8 @@ export interface GoalDraftSession {
 	targetGoalId?: string;
 	startedAt: string;
 	auditorEnabled: boolean;
+	maxCostUsd?: number;
+	costUsedUsd?: number;
 	/** Tombstone marker: set when the draft is cancelled, confirmed, or replaced. */
 	clearedAt?: string;
 }
@@ -43,6 +46,8 @@ export interface ActiveGoalDraft {
 	targetGoalId?: string;
 	startedAt: string;
 	auditorEnabled: boolean;
+	maxCostUsd?: number;
+	costUsedUsd: number;
 	/** E5: formatted questionnaire Q&A to echo in the created-goal report. */
 	questionnaireEcho?: string;
 }
@@ -50,6 +55,19 @@ export interface ActiveGoalDraft {
 const activeDrafts = new WeakMap<GoalCore, ActiveGoalDraft>();
 
 function activeDraft(core: GoalCore): ActiveGoalDraft | undefined { return activeDrafts.get(core); }
+
+export function currentDraft(core: GoalCore): ActiveGoalDraft | undefined { return activeDraft(core); }
+
+/** Branch-local cost accrual before goal creation; the snapshot survives reload. */
+export function recordDraftCost(core: GoalCore, ctx: ExtensionContext, draft: ActiveGoalDraft, costUsd: number): void {
+	if (activeDraft(core) !== draft || !Number.isFinite(costUsd) || costUsd <= 0) return;
+	draft.costUsedUsd += costUsd;
+	draftSessionEntry(core, {version: 1, mode: draft.mode, seed: draft.originalTopic, targetGoalId: draft.targetGoalId, startedAt: draft.startedAt, auditorEnabled: draft.auditorEnabled, maxCostUsd: draft.maxCostUsd, costUsedUsd: draft.costUsedUsd});
+	if (draft.maxCostUsd !== undefined && draft.costUsedUsd >= draft.maxCostUsd - 1e-9) {
+		clearGoalDrafting(core, ctx);
+		ctx.ui.notify(`Draft stopped: estimated cost $${draft.costUsedUsd.toFixed(4)} reached the $${draft.maxCostUsd.toFixed(2)} limit. No goal was created. Start /goal again with a larger --max-cost to continue.`, "warning");
+	}
+}
 
 export function hasActiveDraft(core: GoalCore): boolean { return activeDraft(core) !== undefined; }
 
@@ -64,7 +82,7 @@ export function clearGoalDrafting(core: GoalCore, ctx: ExtensionContext): void {
 	const existing = activeDrafts.get(core)!;
 	activeDrafts.delete(core);
 	// Tombstone the durable entry: the last entry wins on rehydration.
-	draftSessionEntry(core, { version: 1, mode: existing.mode, seed: existing.originalTopic, targetGoalId: existing.targetGoalId, startedAt: existing.startedAt, auditorEnabled: existing.auditorEnabled, clearedAt: nowIso() });
+	draftSessionEntry(core, { version: 1, mode: existing.mode, seed: existing.originalTopic, targetGoalId: existing.targetGoalId, startedAt: existing.startedAt, auditorEnabled: existing.auditorEnabled, maxCostUsd: existing.maxCostUsd, costUsedUsd: existing.costUsedUsd, clearedAt: nowIso() });
 	core.installGoalToolProfile(core.tasksEnabled);
 	void ctx;
 }
@@ -107,6 +125,12 @@ export function rehydrateDraft(core: GoalCore, ctx: ExtensionContext): void {
 		core.installGoalToolProfile(core.tasksEnabled);
 		return;
 	}
+	if ((session.maxCostUsd !== undefined && !validateMaxCostUsd(session.maxCostUsd).ok) || (session.costUsedUsd !== undefined && (typeof session.costUsedUsd !== "number" || !Number.isFinite(session.costUsedUsd) || session.costUsedUsd < 0))) {
+		draftSessionEntry(core, {...session, clearedAt: nowIso()});
+		core.installGoalToolProfile(core.tasksEnabled);
+		ctx.ui.notify("Draft stopped: persisted cost data is invalid; a spending cap cannot be enforced. Start a new draft.", "warning");
+		return;
+	}
 	if (session.mode === "tweak") {
 		core.reconcileFocusedGoalFromDisk(ctx);
 		if (!core.state.goal || core.state.goal.id !== session.targetGoalId) {
@@ -117,7 +141,7 @@ export function rehydrateDraft(core: GoalCore, ctx: ExtensionContext): void {
 			return;
 		}
 	}
-	activeDrafts.set(core, { mode: session.mode, originalTopic: session.seed, targetGoalId: session.targetGoalId, startedAt: session.startedAt, auditorEnabled: session.auditorEnabled });
+	activeDrafts.set(core, { mode: session.mode, originalTopic: session.seed, targetGoalId: session.targetGoalId, startedAt: session.startedAt, auditorEnabled: session.auditorEnabled, maxCostUsd: session.maxCostUsd, costUsedUsd: session.costUsedUsd ?? 0 });
 	core.installDraftingToolProfile();
 }
 
@@ -135,7 +159,7 @@ async function awaitDraftChoice(core: GoalCore, ctx: ExtensionContext, label: st
 	}
 }
 
-export async function startGoalDrafting(core: GoalCore, ctx: ExtensionContext, mode: GoalDraftMode, topic: string, targetGoal?: GoalRecord): Promise<void> {
+export async function startGoalDrafting(core: GoalCore, ctx: ExtensionContext, mode: GoalDraftMode, topic: string, targetGoal?: GoalRecord, maxCostUsd?: number): Promise<void> {
 	const trimmed = topic.trim();
 	const label = mode === "sisyphus" ? "Sisyphus draft" : mode === "tweak" ? "Goal tweak draft" : "Goal draft";
 	// A second draft must never silently discard the first.
@@ -163,21 +187,23 @@ export async function startGoalDrafting(core: GoalCore, ctx: ExtensionContext, m
 	const auditorEnabled = mode === "tweak"
 		? !(targetGoal?.skipAuditor ?? loadGoalSettings(ctx.cwd).disabled)
 		: !loadGoalSettings(ctx.cwd).disabled;
-	activeDrafts.set(core, { mode, originalTopic: trimmed, targetGoalId: targetGoal?.id, startedAt, auditorEnabled });
-	draftSessionEntry(core, { version: 1, mode, seed: trimmed, targetGoalId: targetGoal?.id, startedAt, auditorEnabled });
+	activeDrafts.set(core, { mode, originalTopic: trimmed, targetGoalId: targetGoal?.id, startedAt, auditorEnabled, maxCostUsd, costUsedUsd: 0 });
+	draftSessionEntry(core, { version: 1, mode, seed: trimmed, targetGoalId: targetGoal?.id, startedAt, auditorEnabled, maxCostUsd, costUsedUsd: 0 });
 	core.clearContinuationState();
 	core.clearActiveAccounting();
 	core.installDraftingToolProfile();
-	ctx.ui.notify(label + " started" + (trimmed ? ": " + trimmed.slice(0, 60) : "") + ". The agent will clarify, propose a goal and tasks where useful, then ask you to confirm.", "info");
+	ctx.ui.notify(label + " started" + (trimmed ? ": " + trimmed.slice(0, 60) : "") + `. ${formatGoalCost(maxCostUsd)}. The agent will clarify, propose a goal and tasks where useful, then ask you to confirm.`, "info");
 	const prompt = mode === "tweak" ? [
 		"[GOAL TWEAK DRAFT]",
 		"The user wants to revise the focused persistent goal. Discuss requirements as needed; do not edit files or start substantive work.",
 		"Propose the complete revised objective with propose_goal_draft. Preserve the current goal mode. Include a complete flat task list when the revision changes a decomposable plan; omit tasks to retain the current list.",
 		"For budget-only changes preserve the objective, tasks, mode and auditor. token_budget: positive integer sets the total lifetime limit; null removes it; omit to retain it. Change budgets only when requested. Do not add clarification steps when the request is clear.",
 		formatGoalBudget(targetGoal?.tokenBudget),
+		formatGoalCost(targetGoal?.maxCostUsd, targetGoal?.usage.costUsd),
+		"max_cost_usd: positive USD amount in cents sets the lifetime estimated-cost cap; null removes it; omit to retain it. Change only on user request.",
 		"Current objective:", targetGoal?.objective ?? "(goal no longer available)",
 		"User request:", trimmed || "(ask what they want to change)",
-	].join("\n") : goalDraftingPrompt(trimmed, mode);
+	].join("\n") : [goalDraftingPrompt(trimmed, mode), ...(maxCostUsd === undefined ? [] : [`\nUser-defined lifetime estimated USD cap: $${maxCostUsd.toFixed(2)}. This includes the drafting conversation, goal execution, and completion auditor. Do not create an unlimited goal or change this cap in the proposal.`])].join("\n");
 	try {
 		core.pi.sendUserMessage(prompt, { deliverAs: ctx.isIdle() ? "followUp" : "steer" });
 	} catch (err) {
@@ -194,7 +220,7 @@ function proposedTaskList(core: GoalCore, ctx: ExtensionContext, tasks: FlatTask
 	return { ok: true, value: { tasks: converted.tasks, blockCompletion: blockCompletion === true, proposedAt: nowIso() } };
 }
 
-export function proposalText(draft: ActiveGoalDraft, objective: string, autoContinue: boolean, taskList: GoalTaskList | undefined, current?: GoalRecord, tokenBudget?: number | null): string {
+export function proposalText(draft: ActiveGoalDraft, objective: string, autoContinue: boolean, taskList: GoalTaskList | undefined, current?: GoalRecord, tokenBudget?: number | null, maxCostUsd?: number | null): string {
 	const base = draft.mode === "tweak" && current
 		? buildTweakConfirmationText({ currentObjective: current.objective, newObjective: objective, changeSummary: draft.originalTopic || "Goal revised through guided drafting.", sisyphus: current.sisyphus, tasks: taskList?.tasks })
 		: buildDraftConfirmationText({ focus: draft.mode === "sisyphus" ? "sisyphus" : "goal", originalTopic: draft.originalTopic, objective, autoContinue });
@@ -223,7 +249,9 @@ export function proposalText(draft: ActiveGoalDraft, objective: string, autoCont
 			tasksText = "\n\nTasks derived from the objective (confirm or ask the agent to adjust):\n" + renderConfirmationTasks(derived, 0).join("\n");
 		}
 	}
-	return `${draft.mode === "tweak" ? `Current ${formatGoalBudget(current?.tokenBudget)}\nProposed ${formatGoalBudget(tokenBudget === undefined ? current?.tokenBudget : tokenBudget ?? undefined)}` : formatGoalBudget(tokenBudget ?? undefined)}\n\n${base}${tasksText}`;
+	const proposedCost = maxCostUsd === undefined ? draft.mode === "tweak" ? current?.maxCostUsd : draft.maxCostUsd : maxCostUsd ?? undefined;
+	const costUsed = draft.mode === "tweak" ? current?.usage?.costUsd ?? 0 : draft.costUsedUsd;
+	return `${draft.mode === "tweak" ? `Current ${formatGoalBudget(current?.tokenBudget)}\nProposed ${formatGoalBudget(tokenBudget === undefined ? current?.tokenBudget : tokenBudget ?? undefined)}\nCurrent ${formatGoalCost(current?.maxCostUsd, costUsed)}\nProposed ${formatGoalCost(proposedCost, costUsed)}` : `${formatGoalBudget(tokenBudget ?? undefined)}\n${formatGoalCost(proposedCost, costUsed)} (drafting included)`}\n\n${base}${tasksText}`;
 }
 
 function flatTaskSchema() {
@@ -316,6 +344,7 @@ export function registerDraftingTools(core: GoalCore): void {
 		parameters: Type.Object({
 			objective: Type.String({ description: "Complete proposed objective; preserve it exactly for budget-only tweaks." }),
 			token_budget: Type.Optional(Type.Union([Type.Integer({minimum: 1}), Type.Null()], {description: "Only on user request: positive whole-token lifetime limit; null removes it. Omit to retain the current tweak budget or create without one."})),
+			max_cost_usd: Type.Optional(Type.Union([Type.Number({minimum: 0.01}), Type.Null()], {description: "Only on user request: lifetime estimated USD cap in cents; null removes it on tweak. Omit to retain the command-line cap or existing goal limit."})),
 			auto_continue: Type.Optional(Type.Boolean({ description: "Defaults to true." })),
 			sisyphus: Type.Optional(Type.Boolean({ description: "Must match the user-selected goal mode." })),
 			tasks: Type.Optional(flatTaskSchema()),
@@ -329,6 +358,11 @@ export function registerDraftingTools(core: GoalCore): void {
 				const validation = validateTokenBudgetInput(params.token_budget);
 				if (!validation.ok) return {content: [{type: "text", text: validation.message}], details: goalDetails(core.state.goal)};
 			}
+			if (params.max_cost_usd !== undefined && params.max_cost_usd !== null) {
+				const parsed = validateMaxCostUsd(params.max_cost_usd);
+				if (!parsed.ok) return {content: [{type: "text", text: parsed.message}], details: goalDetails(core.state.goal)};
+			}
+			if (draft.mode !== "tweak" && draft.maxCostUsd !== undefined && params.max_cost_usd !== undefined && params.max_cost_usd !== draft.maxCostUsd) return {content: [{type: "text", text: "The proposal cannot change the user's --max-cost limit. Ask the user to restart the draft with a new cap."}], details: goalDetails(core.state.goal)};
 			const objective = params.objective.trim();
 			if (!objective) return { content: [{ type: "text", text: "The proposed objective must be at least 1 character." }], details: goalDetails(core.state.goal) };
 			const objectiveMaxChars = loadGoalSettings(ctx.cwd).objectiveMaxChars ?? 0;
@@ -346,7 +380,13 @@ export function registerDraftingTools(core: GoalCore): void {
 			const proposalToken = target ? core.focusedOperationToken(target.id) : undefined;
 			const proposalRevision = target?.revision ?? 0;
 			const proposedBudget = params.token_budget === undefined ? target?.tokenBudget : params.token_budget ?? undefined;
-			const budgetSummary = target ? `Current ${formatGoalBudget(target.tokenBudget)}\nProposed ${formatGoalBudget(proposedBudget)}` : formatGoalBudget(proposedBudget);
+			const proposedMaxCost = params.max_cost_usd === undefined ? draft.mode === "tweak" ? target?.maxCostUsd : draft.maxCostUsd : params.max_cost_usd ?? undefined;
+			const costUsed = draft.mode === "tweak" ? target?.usage?.costUsd ?? 0 : draft.costUsedUsd;
+			const budgetSummary = target ? `Current ${formatGoalBudget(target.tokenBudget)}\nProposed ${formatGoalBudget(proposedBudget)}\nCurrent ${formatGoalCost(target.maxCostUsd, costUsed)}\nProposed ${formatGoalCost(proposedMaxCost, costUsed)}` : `${formatGoalBudget(proposedBudget)}\n${formatGoalCost(proposedMaxCost, costUsed)} (drafting included)`;
+			if (draft.mode !== "tweak" && proposedMaxCost !== undefined && draft.costUsedUsd >= proposedMaxCost - 1e-9) {
+				clearGoalDrafting(core, ctx);
+				return {content: [{type: "text", text: "Draft stopped: drafting already exhausted the proposed estimated USD limit. No goal was created. Start /goal again with a larger --max-cost."}], details: goalDetails(core.state.goal), terminate: true};
+			}
 			if (draft.mode === "sisyphus" && !sisyphusObjectiveSufficient(objective)) return { content: [{ type: "text", text: "A Sisyphus goal needs ordered steps with explicit per-step done criteria. Refine the objective with numbered steps (1) ..., 2) ...) or Step N: blocks before proposing again." }], details: goalDetails(core.state.goal) };
 			let confirmation: { decision: ProposalDecision; auditorEnabled: boolean; unavailable: boolean };
 			if (shouldAutoConfirmProposal({ hasUI: ctx.hasUI, autoConfirmEnv: process.env.PI_GOAL_AUTO_CONFIRM })) {
@@ -354,7 +394,7 @@ export function registerDraftingTools(core: GoalCore): void {
 			} else {
 				core.enterGoalModal();
 				try {
-					confirmation = await showProposalDialog(ctx, proposalText(draft, objective, params.auto_continue !== false, taskResult.value, target ?? undefined, params.token_budget), draft.mode === "sisyphus" ? "sisyphus" : "goal", draft.auditorEnabled);
+					confirmation = await showProposalDialog(ctx, proposalText(draft, objective, params.auto_continue !== false, taskResult.value, target ?? undefined, params.token_budget, params.max_cost_usd), draft.mode === "sisyphus" ? "sisyphus" : "goal", draft.auditorEnabled);
 				} catch (error) {
 					return { content: [{ type: "text", text: `${proposalDialogFailureMessage(error)} Do not retry the dialog until the host issue is resolved.` }], details: goalDetails(core.state.goal) };
 				} finally {
@@ -386,7 +426,7 @@ export function registerDraftingTools(core: GoalCore): void {
 				if (confirmation.auditorEnabled !== draft.auditorEnabled) {
 					const next = { ...draft, auditorEnabled: confirmation.auditorEnabled };
 					activeDrafts.set(core, next);
-					draftSessionEntry(core, { version: 1, mode: next.mode, seed: next.originalTopic, targetGoalId: next.targetGoalId, startedAt: next.startedAt, auditorEnabled: next.auditorEnabled });
+					draftSessionEntry(core, { version: 1, mode: next.mode, seed: next.originalTopic, targetGoalId: next.targetGoalId, startedAt: next.startedAt, auditorEnabled: next.auditorEnabled, maxCostUsd: next.maxCostUsd, costUsedUsd: next.costUsedUsd });
 				}
 				return { content: [{ type: "text", text: `${summary}\n\nGoal draft refinement requested. The goal was not changed; ask what the user wants revised before proposing again.` }], details: goalDetails(core.state.goal) };
 			}
@@ -401,7 +441,7 @@ export function registerDraftingTools(core: GoalCore): void {
 					const derived = deriveTasksFromObjective(extracted.objective);
 					return derived && derived.length > 0 ? { tasks: derived, blockCompletion: false, proposedAt: nowIso() } : undefined;
 				})();
-				core.replaceGoal({ objective: extracted.objective, autoContinue: params.auto_continue !== false, sisyphus: expectedSisyphus, taskList: effectiveTaskList, skipAuditor }, ctx, true, extracted.verificationContract, proposedBudget);
+				core.replaceGoal({ objective: extracted.objective, autoContinue: params.auto_continue !== false, sisyphus: expectedSisyphus, taskList: effectiveTaskList, skipAuditor, maxCostUsd: proposedMaxCost, initialCostUsd: draft.costUsedUsd }, ctx, true, extracted.verificationContract, proposedBudget);
 				clearGoalDrafting(core, ctx);
 				const created = core.state.goal;
 				return { content: [{ type: "text", text: `${summary}\n\n${buildGoalCreatedReport({
@@ -414,6 +454,8 @@ export function registerDraftingTools(core: GoalCore): void {
 					verificationContract: created?.verificationContract,
 					auditorEnabled: !skipAuditor,
 					tokenBudget: created?.tokenBudget,
+					maxCostUsd: created?.maxCostUsd,
+					costUsedUsd: created?.usage.costUsd,
 				})}` }], details: goalDetails(core.state.goal), terminate: true };
 			}
 			if (!target) return { content: [{ type: "text", text: "The goal changed while drafting; review it and start /goal-tweak again." }], details: goalDetails(core.state.goal) };
@@ -448,8 +490,8 @@ export function registerDraftingTools(core: GoalCore): void {
 					// /goal-resume transition: status active + pause metadata
 					// cleared). A budget-limited goal needs an explicit budget
 					// change that clears the resource gate; preserve scheduler limits.
-					const exhausted = budgetReached({...goal, tokenBudget: proposedBudget});
-					const wantsResume = goal.status === "paused" || goal.status === "blocked" || (goal.status === "budget_limited" && params.token_budget !== undefined && !exhausted);
+					const exhausted = budgetReached({...goal, tokenBudget: proposedBudget, maxCostUsd: proposedMaxCost});
+					const wantsResume = goal.status === "paused" || goal.status === "blocked" || (goal.status === "budget_limited" && (params.token_budget !== undefined || params.max_cost_usd !== undefined) && !exhausted);
 					const scheduler = goal.scheduler;
 					const owned = !scheduler || (scheduler.owner === (ctx.sessionManager.getSessionId() || "unknown-session") && !["interrupted", "claimed"].includes(scheduler.phase));
 					const limit = loadGoalSettings(ctx.cwd).maxAutonomousRuns;
@@ -459,6 +501,7 @@ export function registerDraftingTools(core: GoalCore): void {
 					return {
 						...goal,
 						tokenBudget: proposedBudget,
+						maxCostUsd: proposedMaxCost,
 						...(exhausted && owned && scheduler ? {scheduler: {...scheduler, generation: randomUUID(), phase: "idle" as const, decision: undefined, dispatch: undefined, wait: undefined}} : {}),
 						objective: extracted.objective,
 						verificationContract: extracted.verificationContract ?? goal.verificationContract,
@@ -471,7 +514,19 @@ export function registerDraftingTools(core: GoalCore): void {
 						updatedAt: now,
 					};
 				},
-				ledger: (written) => [...(target.tokenBudget !== written.tokenBudget ? [{type: "goal_budget_changed" as const, goalId: written.id, oldBudget: target.tokenBudget ?? null, newBudget: written.tokenBudget ?? null, tokensUsed: written.usage.tokensUsed, at: written.updatedAt}] : []), ...(target.status !== "budget_limited" && written.status === "budget_limited" ? [{type: "goal_budget_limited" as const, goalId: written.id, budget: written.tokenBudget!, tokensUsed: written.usage.tokensUsed, at: written.updatedAt}] : []), { type: "goal_tweaked", goalId: written.id, changeSummary: "Goal revised through /goal-tweak drafting.", at: written.updatedAt }, ...(taskResult.value ? [{ type: "task_list_set" as const, goalId: written.id, taskCount: countTasks(written.taskList?.tasks), blockCompletion: taskResult.value.blockCompletion, at: written.updatedAt }] : [])],
+				ledger: written => {
+					const goalId = written.id;
+					const at = written.updatedAt;
+					const becameLimited = target.status !== "budget_limited" && written.status === "budget_limited";
+					return [
+						...(target.tokenBudget !== written.tokenBudget ? [{type: "goal_budget_changed" as const, goalId, oldBudget: target.tokenBudget ?? null, newBudget: written.tokenBudget ?? null, tokensUsed: written.usage.tokensUsed, at}] : []),
+						...(target.maxCostUsd !== written.maxCostUsd ? [{type: "goal_cost_budget_changed" as const, goalId, oldMaxCostUsd: target.maxCostUsd ?? null, newMaxCostUsd: written.maxCostUsd ?? null, costUsedUsd: written.usage.costUsd ?? 0, at}] : []),
+						...(becameLimited && tokenBudgetReached(written) ? [{type: "goal_budget_limited" as const, goalId, budget: written.tokenBudget!, tokensUsed: written.usage.tokensUsed, at}] : []),
+						...(becameLimited && costBudgetReached(written) ? [{type: "goal_cost_budget_limited" as const, goalId, maxCostUsd: written.maxCostUsd!, costUsedUsd: written.usage.costUsd ?? 0, at}] : []),
+						{ type: "goal_tweaked" as const, goalId, changeSummary: "Goal revised through /goal-tweak drafting.", at },
+						...(taskResult.value ? [{ type: "task_list_set" as const, goalId, taskCount: countTasks(written.taskList?.tasks), blockCompletion: taskResult.value.blockCompletion, at }] : []),
+					];
+				},
 			});
 			if (!result.ok) return { content: [{ type: "text", text: "Goal tweak was not applied: " + result.message }], details: goalDetails(core.state.goal) };
 			if (resumed) {
@@ -495,7 +550,7 @@ export function registerDraftingTools(core: GoalCore): void {
 				core.queueContinuation(ctx, true);
 			}
 			clearGoalDrafting(core, ctx);
-			return { content: [{ type: "text", text: `${summary}\n\nGoal tweak confirmed and applied.\n${formatGoalBudget(result.goal.tokenBudget)}${schedulingNote}${result.goal.status === "budget_limited" ? "\nConsumed tokens already meet this budget; the goal remains budget-limited." : result.goal.status === "paused" ? "\nGoal remains paused. Use /goal-resume to continue when scheduling permits." : ""}` }], details: goalDetails(result.goal), terminate: true };
+			return { content: [{ type: "text", text: `${summary}\n\nGoal tweak confirmed and applied.\n${formatGoalBudget(result.goal.tokenBudget)}\n${formatGoalCost(result.goal.maxCostUsd, result.goal.usage.costUsd)}${schedulingNote}${result.goal.status === "budget_limited" ? "\nA configured token or estimated USD cost limit is exhausted; the goal remains budget-limited." : result.goal.status === "paused" ? "\nGoal remains paused. Use /goal-resume to continue when scheduling permits." : ""}` }], details: goalDetails(result.goal), terminate: true };
 		},
 		renderCall(args, theme) {
 			// §proposal-presentation: the tool-call display lands in the terminal

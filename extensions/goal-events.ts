@@ -3,6 +3,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	GOAL_EVENT_ENTRY,
 	assistantTurnTokens,
+	assistantTurnCostUsd,
 	extractGoalIdFromInjectedMessage,
 	goalEventMessageId,
 	hasAbortedAssistantMessage,
@@ -17,7 +18,7 @@ import { latestAuditorResultForGoal, readGoalLedger, goalRuntimeEvents, invalida
 import { shouldArmPostCompactReminder, shouldInjectPostCompactReminder } from "./goal-policy.ts";
 import { formatTokenValue } from "./goal-core.ts";
 import { loadGoalSettings, invalidateGoalSettingsCache } from "./goal-settings.ts";
-import { modelBudgetLine, budgetRemaining } from "./goal-accounting.ts";
+import { modelBudgetLine, budgetRemaining, costBudgetLine, costBudgetReached, tokenBudgetReached } from "./goal-accounting.ts";
 import { asRecord, nowIso, type AssistantMessageLike, type GoalRecord } from "./goal-record.ts";
 import { goalSelectorLabel, otherOpenGoalCount } from "./goal-pool.ts";
 import { invalidateGoalPoolCache } from "./storage/goal-files.ts";
@@ -30,7 +31,7 @@ import {
 	unfocusedOpenGoalsPrompt,
 	untrustedObjectiveBlock,
 } from "./prompts/goal-prompts.ts";
-import { hasActiveDraft, rehydrateDraft } from "./goal-drafting.ts";
+import { hasActiveDraft, rehydrateDraft, currentDraft, recordDraftCost, clearGoalDrafting, type ActiveGoalDraft } from "./goal-drafting.ts";
 import { syncTerminalInputPause } from "./goal-widget.ts";
 import type { GoalCore } from "./goal-state.ts";
 import { filterGoalSessionContext } from "./goal-session-safety.ts";
@@ -70,6 +71,27 @@ export function registerGoalEvents(core: GoalCore): void {
 	pi.on("before_provider_request", (event, ctx) => cacheGoalHistory(event.payload, liveRetention.contents(sessionKeyFor(ctx as ExtensionContext | undefined))));
 	let continuationAfterSettleFor: string | null = null;
 	let networkErrorRecoveryAfterSettleFor: string | null = null;
+	let draftForTurn: ActiveGoalDraft | undefined;
+	let draftGoalIdAtTurnStart: string | null = null;
+	const chargedAborts = new WeakSet<object>();
+	let observedEntryCount = 0;
+	/** Pi records background cache-warming costs as usage entries, not assistant turns. */
+	function newSessionUsageCost(ctx: ExtensionContext, draft: ActiveGoalDraft | undefined): number {
+		const entries = ctx.sessionManager.getEntries?.() ?? [];
+		const unseen = entries.slice(observedEntryCount);
+		observedEntryCount = entries.length;
+		const start = draft ? Date.parse(draft.startedAt) : core.state.goal ? Date.parse(core.state.goal.createdAt) : Infinity;
+		return unseen.reduce((sum, entry) => {
+			if (entry.type !== "usage" || Date.parse(entry.timestamp) < start) return sum;
+			const cost = entry.usage?.cost?.total;
+			return sum + (typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : 0);
+		}, 0);
+	}
+
+	function clearUnpricedDraft(ctxCore: GoalCore, ctx: ExtensionContext): void {
+		clearGoalDrafting(ctxCore, ctx);
+		ctx.ui.notify("Draft stopped: Pi did not report usable cost for this model response. No goal was created; a USD cap cannot be enforced.", "warning");
+	}
 
 	pi.on("context", async (event, ctx) => {
 		const filtered = filterGoalSessionContext(event.messages);
@@ -92,6 +114,8 @@ export function registerGoalEvents(core: GoalCore): void {
 	pi.on("agent_start", async (_event, ctx) => { core.scheduler.begin(ctx); });
 	pi.on("message_start", async (event, ctx) => { core.scheduler.message(ctx, event.message); });
 	pi.on("turn_start", async (_event, ctx) => {
+		draftForTurn = currentDraft(core);
+		draftGoalIdAtTurnStart = core.state.goal?.id ?? null;
 		core.scheduler.turn(ctx);
 		// Per-turn flag resets (#4 + C9 fix).
 		core.advanceTurnSeq();
@@ -162,8 +186,37 @@ export function registerGoalEvents(core: GoalCore): void {
 	pi.on("turn_end", async (event, ctx) => {
 		const message = event.message as AssistantMessageLike;
 		const tokens = assistantTurnTokens(message);
+		const messageCost = assistantTurnCostUsd(message);
+		const toolCost = (event.toolResults ?? []).reduce((total, result) => {
+			const usage = (result as {usage?: {cost?: {total?: number}}}).usage;
+			const amount = usage?.cost?.total;
+			return total + (typeof amount === "number" && Number.isFinite(amount) && amount > 0 ? amount : 0);
+		}, 0);
+		const cost = (messageCost ?? 0) + toolCost + newSessionUsageCost(ctx, draftForTurn);
+		const attributedDraft = draftForTurn;
+		const confirmedDraft = Boolean(attributedDraft && attributedDraft.mode !== "tweak" && core.state.goal && core.state.goal.id !== draftGoalIdAtTurnStart && !currentDraft(core));
+		draftForTurn = undefined;
+		if (typeof message === "object" && message) chargedAborts.add(message);
 		core.touchGoalActivity(); // F5
-		core.accountProgress(ctx, { completedTurnTokens: tokens });
+		if (attributedDraft?.mode === "tweak") {
+			core.chargeGoalCost(ctx, cost, attributedDraft.targetGoalId);
+		} else if (attributedDraft) {
+			if (confirmedDraft) core.accountProgress(ctx, { completedTurnTokens: tokens, completedTurnCostUsd: cost });
+			else recordDraftCost(core, ctx, attributedDraft, cost);
+		} else if (core.state.goal && core.state.goal.status !== "active") {
+			// The response that stopped a goal (or accepted its audit) was still billed.
+			core.chargeGoalCost(ctx, cost);
+		} else {
+			core.accountProgress(ctx, { completedTurnTokens: tokens, completedTurnCostUsd: cost });
+		}
+		const capped = attributedDraft?.maxCostUsd !== undefined || core.state.goal?.maxCostUsd !== undefined;
+		if (capped && (messageCost === null || (messageCost === 0 && Number((message.usage as {totalTokens?: number} | undefined)?.totalTokens ?? tokens) > 0))) {
+			if (attributedDraft && attributedDraft.mode !== "tweak" && !confirmedDraft) {
+				if (currentDraft(core) === attributedDraft) clearUnpricedDraft(core, ctx);
+			} else if (core.state.goal?.status === "active") {
+				core.pauseForUnknownCost(ctx);
+			}
+		}
 
 		if (isAbortedAssistantMessage(message)) {
 			// Pause only on a genuine user abort (signal fired). A provider- or
@@ -261,6 +314,8 @@ export function registerGoalEvents(core: GoalCore): void {
 
 	pi.on("session_start", async (event, ctx) => {
 		core.auditMessages.clear();
+		draftForTurn = undefined;
+		observedEntryCount = ctx.sessionManager.getEntries?.().length ?? 0;
 		// NAF: the zero-op read caches are session-scoped — a new session always
 		// re-reads settings/pool/ledger fresh from disk (cross-process and
 		// hand-edited changes are picked up at the session boundary).
@@ -305,7 +360,15 @@ export function registerGoalEvents(core: GoalCore): void {
 		core.accountProgress(ctx);
 	});
 
-	pi.on("session_compact", async (_event, ctx) => {
+	pi.on("session_compact", async (event, ctx) => {
+		const compactCost = (event.compactionEntry as {usage?: {cost?: {total?: number}}} | undefined)?.usage?.cost?.total;
+		const extraCost = (typeof compactCost === "number" && Number.isFinite(compactCost) && compactCost > 0 ? compactCost : 0) + newSessionUsageCost(ctx, currentDraft(core));
+		if (extraCost > 0) {
+			const draft = currentDraft(core);
+			if (draft?.mode === "tweak") core.chargeGoalCost(ctx, extraCost, draft.targetGoalId);
+			else if (draft) recordDraftCost(core, ctx, draft, extraCost);
+			else core.chargeGoalCost(ctx, extraCost);
+		}
 		core.goalService.flushTurn(ctx); // P1-3: persist any buffered transaction before reload
 		if (core.state.goal) core.persist(ctx);
 		core.beginAccounting();
@@ -319,6 +382,8 @@ export function registerGoalEvents(core: GoalCore): void {
 
 	pi.on("session_tree", async (_event, ctx) => {
 		core.auditMessages.clear();
+		draftForTurn = undefined;
+		observedEntryCount = ctx.sessionManager.getEntries?.().length ?? 0;
 		core.goalService.flushTurn(ctx); // P1-3: persist any buffered transaction before reload
 		await core.loadState(ctx);
 		rehydrateDraft(core, ctx);
@@ -378,6 +443,10 @@ export function registerGoalEvents(core: GoalCore): void {
 		let promptLedger: ReturnType<typeof readGoalLedger> | undefined;
 		const getPromptLedger = () => promptLedger ??= { events: core.state.goal ? goalRuntimeEvents(ctx, core.state.goal.id) : [], malformed: 0 };
 
+		const draft = currentDraft(core);
+		if (draft && draft.mode !== "tweak" && draft.maxCostUsd !== undefined) {
+			return {state: `[PI GOAL DRAFT] Lifetime estimated USD cap: $${draft.maxCostUsd.toFixed(2)}, including drafting and completion audit. Do not raise or remove the user's cap. Stop if reached.`, counters: `Draft cost so far: $${draft.costUsedUsd.toFixed(4)} / $${draft.maxCostUsd.toFixed(2)} USD (Pi estimate, not provider invoice).`};
+		}
 		if (!core.state.goal) {
 			// Issue #72: hideUnfocusedPrompt opts out of the model-facing
 			// unfocused reminder only. The stale-checkpoint guard above and
@@ -415,16 +484,17 @@ export function registerGoalEvents(core: GoalCore): void {
 		// do not start new substantive work, never claim completion unless real.
 		if (core.state.goal?.status === "budget_limited") {
 			const limitedGoal = core.state.goal;
-			const budgetText = modelBudgetLine(limitedGoal);
+			const budgetText = [tokenBudgetReached(limitedGoal) ? modelBudgetLine(limitedGoal) : null, costBudgetLine(limitedGoal)].filter(Boolean).join("; ");
+			const limitKind = costBudgetReached(limitedGoal) ? "estimated USD cost limit" : "token budget";
 			// E4: surface the remaining-vs-overshoot fact in the wrap-up steering.
 			const remaining = budgetRemaining(limitedGoal);
-			const balanceText = typeof remaining === "number"
+			const balanceText = tokenBudgetReached(limitedGoal) && typeof remaining === "number"
 				? remaining < 0
 					? ` — ${formatTokenValue(-remaining)} over the budget`
 					: ` — ${formatTokenValue(remaining)} remaining`
 				: "";
 			const reminder = core.runtime.consumePostBudgetReminder()
-				? `\n\n[TOKEN BUDGET REACHED goalId=${limitedGoal.id}]\nThe goal's lifetime token-spending cap (not context capacity) has been reached${budgetText ? ` (${budgetText}${balanceText})` : ""}. Wrap up the current work in one final response: summarize what was accomplished and what remains, do not start new substantive work, and do not claim the goal is complete unless it actually is. To continue, the user can use /goal-tweak to raise or remove the token budget.`
+				? `\n\n[${costBudgetReached(limitedGoal) ? "COST BUDGET REACHED" : "TOKEN BUDGET REACHED"} goalId=${limitedGoal.id}]\nThe goal's ${limitKind} has been reached${budgetText ? ` (${budgetText}${balanceText})` : ""}. Wrap up the current work in one final response: summarize what was accomplished and what remains, do not start new substantive work, and do not claim the goal is complete unless it actually is. To continue, the user can use /goal-tweak to raise or remove the applicable limit.`
 				: "";
 		return { state: `[PI GOAL BUDGET LIMITED goalId=${limitedGoal.id}]\n${untrustedObjectiveBlock(limitedGoal)}${budgetText ? `\n${budgetText}` : ""}${reminder}` };
 		}
@@ -477,12 +547,28 @@ export function registerGoalEvents(core: GoalCore): void {
 
 		// Account for any tokens from aborted in-flight assistant messages so
 		// they are not silently lost (but charge them to the original goal).
-		const abortedTokens = event.messages
-			.filter(isAbortedAssistantMessage)
-			.reduce((sum, message) => sum + assistantTurnTokens(message), 0);
-		if (abortedTokens > 0 && endedGoalId && core.state.goal?.id === endedGoalId) {
-			core.accountProgress(ctx, { completedTurnTokens: abortedTokens });
+		const unchargedAborts = event.messages.filter(message => isAbortedAssistantMessage(message) && !chargedAborts.has(message));
+		const abortedTokens = unchargedAborts.reduce((sum, message) => sum + assistantTurnTokens(message), 0);
+		const abortedCost = unchargedAborts.reduce((sum, message) => sum + (assistantTurnCostUsd(message) ?? 0), 0);
+		if (abortedTokens > 0 || abortedCost > 0) {
+			const draft = draftForTurn;
+			if (draft?.mode === "tweak") core.chargeGoalCost(ctx, abortedCost, draft.targetGoalId);
+			else if (draft && currentDraft(core) === draft) recordDraftCost(core, ctx, draft, abortedCost);
+			else if (draft && core.state.goal && core.state.goal.id !== draftGoalIdAtTurnStart) core.chargeGoalCost(ctx, abortedCost, core.state.goal.id);
+			else if (endedGoalId && core.state.goal?.id === endedGoalId) {
+				if (core.state.goal.status === "active") core.accountProgress(ctx, { completedTurnTokens: abortedTokens, completedTurnCostUsd: abortedCost });
+				else core.chargeGoalCost(ctx, abortedCost, endedGoalId);
+			}
+			const missingCost = unchargedAborts.some(message => {
+				const reported = assistantTurnCostUsd(message);
+				return reported === null || (reported === 0 && Number(asRecord(asRecord(message)?.usage)?.totalTokens ?? assistantTurnTokens(message)) > 0);
+			});
+			if (missingCost && (draft?.maxCostUsd !== undefined || core.state.goal?.maxCostUsd !== undefined)) {
+				if (draft && draft.mode !== "tweak" && currentDraft(core) === draft) clearUnpricedDraft(core, ctx);
+				else core.pauseForUnknownCost(ctx);
+			}
 		}
+		draftForTurn = undefined;
 
 		// Keep any prior recovery attempt while Pi finishes its own automatic
 		// retries. A user-driven path resets it through the default argument.
@@ -525,6 +611,13 @@ export function registerGoalEvents(core: GoalCore): void {
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
+		const draft = currentDraft(core);
+		const backgroundCost = newSessionUsageCost(ctx, draft);
+		if (backgroundCost > 0) {
+			if (draft?.mode === "tweak") core.chargeGoalCost(ctx, backgroundCost, draft.targetGoalId);
+			else if (draft) recordDraftCost(core, ctx, draft, backgroundCost);
+			else core.chargeGoalCost(ctx, backgroundCost);
+		}
 		core.auditMessages.flush(ctx, pi);
 		const goalId = continuationAfterSettleFor;
 		continuationAfterSettleFor = null;
@@ -554,6 +647,13 @@ export function registerGoalEvents(core: GoalCore): void {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		const draft = currentDraft(core);
+		const backgroundCost = newSessionUsageCost(ctx, draft);
+		if (backgroundCost > 0) {
+			if (draft?.mode === "tweak") core.chargeGoalCost(ctx, backgroundCost, draft.targetGoalId);
+			else if (draft) recordDraftCost(core, ctx, draft, backgroundCost);
+			else core.chargeGoalCost(ctx, backgroundCost);
+		}
 		core.auditMessages.clear();
 		core.scheduler.shutdown();
 		continuationAfterSettleFor = null;

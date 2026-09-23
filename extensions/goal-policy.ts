@@ -304,6 +304,8 @@ export interface GoalCreatedReportArgs {
 	verificationContract?: string;
 	auditorEnabled?: boolean;
 	tokenBudget?: number;
+	maxCostUsd?: number;
+	costUsedUsd?: number;
 }
 
 export function formatGoalBudget(budget: number | undefined): string {
@@ -322,6 +324,7 @@ export function buildGoalCreatedReport(args: GoalCreatedReportArgs): string {
 	if (args.verificationContract?.trim()) details.push(`Verification: ${args.verificationContract.trim()}`);
 	if (args.auditorEnabled !== undefined) details.push(`Auditor: ${args.auditorEnabled ? "enabled" : "disabled"}`);
 	details.push(formatGoalBudget(args.tokenBudget));
+	if (args.maxCostUsd !== undefined) details.push(`Max estimated cost: $${args.maxCostUsd.toFixed(2)} USD ($${(args.costUsedUsd ?? 0).toFixed(4)} used)`);
 	const summary = args.detailedSummary?.trim();
 	if (summary) details.push(summary);
 	if (details.length > 0) {

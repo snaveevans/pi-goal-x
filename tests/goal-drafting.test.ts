@@ -1178,7 +1178,7 @@ test("cancel and refine outcomes still carry the durable proposal summary", asyn
 // ── F2 regression: proposals always show the task list exactly once ──────
 
 function testDraft(mode: ActiveGoalDraft["mode"], originalTopic: string): ActiveGoalDraft {
-	return { mode, originalTopic, startedAt: "2026-08-05T00:00:00.000Z", auditorEnabled: true };
+	return { mode, originalTopic, startedAt: "2026-08-05T00:00:00.000Z", auditorEnabled: true, costUsedUsd: 0 };
 }
 
 function taskList(tasks: Array<{ id: string; title: string; status?: string }>) {

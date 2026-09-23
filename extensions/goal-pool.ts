@@ -98,6 +98,6 @@ export function mergeFocusedGoalWithDisk(args: { memoryGoal: GoalRecord; diskGoa
 	const activeSeconds = Math.max(args.memoryGoal.usage.activeSeconds, args.diskGoal.usage.activeSeconds);
 	return {
 		...args.diskGoal,
-		usage: { tokensUsed, activeSeconds },
+		usage: { tokensUsed, activeSeconds, ...(args.memoryGoal.usage.costUsd !== undefined || args.diskGoal.usage.costUsd !== undefined ? {costUsd: Math.max(args.memoryGoal.usage.costUsd ?? 0, args.diskGoal.usage.costUsd ?? 0)} : {}) },
 	};
 }

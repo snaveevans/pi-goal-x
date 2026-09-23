@@ -30,6 +30,8 @@ export interface GoalTaskList {
 export interface GoalUsage {
 	tokensUsed: number;
 	activeSeconds: number;
+	/** Pi's estimated USD cost across attributed model calls (including cached tokens). */
+	costUsd?: number;
 }
 
 export interface GoalRecord {
@@ -57,6 +59,8 @@ export interface GoalRecord {
 	revision?: number;
 	/** Optional token budget (whole tokens). When accounted usage reaches it, the runtime marks the goal budget_limited. */
 	tokenBudget?: number;
+	/** Optional lifetime estimated-USD cap; distinct from the token budget. */
+	maxCostUsd?: number;
 	scheduler?: GoalSchedulerState;
 	/**
 	 * Execution focus: the id of the task (or subtask) the agent is working on.
@@ -143,6 +147,9 @@ export interface GoalCreationConfig {
 	taskList?: GoalTaskList;
 	/** User-chosen per-draft auditor bypass, persisted on the created goal. */
 	skipAuditor?: boolean;
+	maxCostUsd?: number;
+	/** Cost incurred before guided confirmation. */
+	initialCostUsd?: number;
 }
 
 export interface AssistantUsage {
@@ -240,7 +247,8 @@ export function normalizeUsage(value: unknown): GoalUsage {
 	if (!raw) return emptyUsage();
 	const tokensUsed = typeof raw.tokensUsed === "number" && Number.isFinite(raw.tokensUsed) ? Math.max(0, Math.floor(raw.tokensUsed)) : 0;
 	const activeSeconds = typeof raw.activeSeconds === "number" && Number.isFinite(raw.activeSeconds) ? Math.max(0, Math.floor(raw.activeSeconds)) : 0;
-	return { tokensUsed, activeSeconds };
+	const costUsd = typeof raw.costUsd === "number" && Number.isFinite(raw.costUsd) ? Math.max(0, raw.costUsd) : undefined;
+	return { tokensUsed, activeSeconds, ...(costUsd === undefined ? {} : {costUsd}) };
 }
 
 export function normalizeTaskItem(raw: Record<string, unknown>): GoalTask | undefined {
@@ -311,6 +319,18 @@ export function validateTokenBudgetInput(value: unknown): { ok: true; value: num
 	return { ok: true, value };
 }
 
+export function validateMaxCostUsd(value: unknown): { ok: true; value: number } | { ok: false; message: string } {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 0.01 || !Number.isSafeInteger(Math.round(value * 100)) || Math.abs(value * 100 - Math.round(value * 100)) > 1e-7) {
+		return { ok: false, message: "max cost must be a positive USD amount in cents (for example 5.00)." };
+	}
+	return { ok: true, value: Math.round(value * 100) / 100 };
+}
+
+export function normalizeMaxCostUsd(value: unknown): number | undefined {
+	const parsed = validateMaxCostUsd(value);
+	return parsed.ok ? parsed.value : undefined;
+}
+
 export function normalizePositiveSafeInteger(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : undefined;
 }
@@ -353,6 +373,11 @@ export function normalizeGoalRecord(value: unknown): GoalRecord | null {
 	// autoContinue normalizes independently of status.
 	const autoContinue = typeof raw.autoContinue === "boolean" ? raw.autoContinue : true;
 	const usage = normalizeUsage(raw.usage);
+	const maxCostUsd = normalizeMaxCostUsd(raw.maxCostUsd);
+	// Corrupt persisted caps must not silently become unlimited or reset spent cost.
+	if (raw.maxCostUsd !== undefined && maxCostUsd === undefined) return null;
+	const rawUsage = asRecord(raw.usage);
+	if (maxCostUsd !== undefined && rawUsage?.costUsd !== undefined && (typeof rawUsage.costUsd !== "number" || !Number.isFinite(rawUsage.costUsd) || rawUsage.costUsd < 0)) return null;
 	const sisyphus = raw.sisyphus === true;
 	const taskList = normalizeTaskList(raw.taskList);
 	// §7.4: accept a persisted currentTaskId only when it references an existing
@@ -380,6 +405,7 @@ export function normalizeGoalRecord(value: unknown): GoalRecord | null {
 		skipAuditor: raw.skipAuditor === true ? true : undefined,
 		revision: Number.isSafeInteger(raw.revision) && (raw.revision as number) >= 0 ? (raw.revision as number) : 0,
 		tokenBudget: normalizePositiveSafeInteger(raw.tokenBudget),
+		...(maxCostUsd === undefined ? {} : { maxCostUsd }),
 		...(raw.scheduler !== undefined ? { scheduler: normalizeGoalScheduler(raw.scheduler) } : {}),
 		taskList,
 		currentTaskId,

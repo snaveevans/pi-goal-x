@@ -28,7 +28,8 @@ import { buildGoalStatusText } from "./goal-status.ts";
 import { effectiveSettingsReport, invalidateGoalSettingsCache, loadGoalSettingsFileConfig } from "./goal-settings.ts";
 import { invalidateGoalPoolCache, mergeGoalPromptFromDisk, readActiveGoalPool } from "./storage/goal-files.ts";
 import { nowIso, type GoalMode, type GoalRecord } from "./goal-record.ts";
-import { clearGoalDrafting, hasActiveDraft, startGoalDrafting } from "./goal-drafting.ts";
+import { clearGoalDrafting, hasActiveDraft, startGoalDrafting, currentDraft } from "./goal-drafting.ts";
+import { parseGoalCostOption, formatGoalCost } from "./goal-cost.ts";
 import { formatRecoveryReport, runRecoveryReport, runRecoveryRepair } from "./goal-recovery.ts";
 import { formatCheckpointHealthReport, readSessionCheckpointHealth } from "./goal-session-health.ts";
 
@@ -179,7 +180,9 @@ export function registerGoalCommands(core: GoalCore): void {
 	}
 
 	function handleDirectGoalSet(rawObjective: string, ctx: ExtensionContext, mode: GoalMode): void {
-		const raw = rawObjective.trim();
+		const parsed = parseGoalCostOption(rawObjective);
+		if (!parsed.ok) { ctx.ui.notify(parsed.message, "warning"); return; }
+		const raw = parsed.objective;
 		if (!raw) {
 			const command = mode === "sisyphus" ? "/sisyphus <objective>" : "/goal <objective>";
 			ctx.ui.notify(`No objective provided. Use ${command}.`, "warning");
@@ -194,7 +197,7 @@ export function registerGoalCommands(core: GoalCore): void {
 		clearGoalDrafting(core, ctx);
 		core.clearContinuationState();
 		core.clearActiveAccounting();
-		core.replaceGoal({ objective, autoContinue: true, sisyphus: mode === "sisyphus" }, ctx, true, verificationContract);
+		core.replaceGoal({ objective, autoContinue: true, sisyphus: mode === "sisyphus", maxCostUsd: parsed.maxCostUsd }, ctx, true, verificationContract);
 	}
 
 	async function runGoalRecovery(rawArgs: string, ctx: ExtensionContext): Promise<void> {
@@ -301,7 +304,9 @@ export function registerGoalCommands(core: GoalCore): void {
 			// the standard mode stays free of settings noise (§13.1).
 			settingsReport: verbose ? [...effectiveSettingsReport(ctx.cwd), `effective goal pool: ${goalStorageRoot(ctx)}`] : [],
 		});
-		ctx.ui.notify(text, "info");
+		const draft = currentDraft(core);
+		const draftStatus = draft && draft.mode !== "tweak" ? `Guided draft in progress (no goal created yet). ${formatGoalCost(draft.maxCostUsd, draft.costUsedUsd)}. /goal-cancel discards the draft.` : "";
+		ctx.ui.notify(draftStatus ? `${text}\n\n${draftStatus}` : text, "info");
 		core.updateUI(ctx);
 	}
 
@@ -714,15 +719,19 @@ export function registerGoalCommands(core: GoalCore): void {
 
 	// /goal and /sisyphus are the guided default. -direct commands are the explicit bypass.
 	pi.registerCommand("goal", {
-		description: "Draft a regular goal with clarification, task planning, and confirmation.",
+		description: "Draft a regular goal: /goal [--max-cost USD] <objective> (cap includes drafting).",
 		handler: async (rawArgs, ctx) => {
-			await startGoalDrafting(core, ctx, "goal", rawArgs);
+			const parsed = parseGoalCostOption(rawArgs);
+			if (!parsed.ok) { ctx.ui.notify(parsed.message, "warning"); return; }
+			await startGoalDrafting(core, ctx, "goal", parsed.objective, undefined, parsed.maxCostUsd);
 		},
 	});
 	pi.registerCommand("sisyphus", {
-		description: "Draft a Sisyphus goal with clarification, task planning, and confirmation.",
+		description: "Draft a Sisyphus goal: /sisyphus [--max-cost USD] <objective>.",
 		handler: async (rawArgs, ctx) => {
-			await startGoalDrafting(core, ctx, "sisyphus", rawArgs);
+			const parsed = parseGoalCostOption(rawArgs);
+			if (!parsed.ok) { ctx.ui.notify(parsed.message, "warning"); return; }
+			await startGoalDrafting(core, ctx, "sisyphus", parsed.objective, undefined, parsed.maxCostUsd);
 		},
 	});
 	pi.registerCommand("goal-cancel", {
@@ -738,11 +747,11 @@ export function registerGoalCommands(core: GoalCore): void {
 		},
 	});
 	pi.registerCommand("goal-direct", {
-		description: "Create and start a regular goal immediately, without drafting.",
+		description: "Create a goal: /goal-direct [--max-cost USD] <objective> (no drafting).",
 		handler: async (rawArgs, ctx) => { handleDirectGoalSet(rawArgs, ctx, "goal"); },
 	});
 	pi.registerCommand("sisyphus-direct", {
-		description: "Create and start a Sisyphus goal immediately, without drafting.",
+		description: "Create a Sisyphus goal: /sisyphus-direct [--max-cost USD] <objective>.",
 		handler: async (rawArgs, ctx) => { handleDirectGoalSet(rawArgs, ctx, "sisyphus"); },
 	});
 	pi.registerCommand("goal-list", {
@@ -790,7 +799,7 @@ export function registerGoalCommands(core: GoalCore): void {
 		},
 	});
 	pi.registerCommand("goal-tweak", {
-		description: "Revise the current goal or its token budget with confirmation.",
+		description: "Revise the current goal, token budget, or estimated USD cost cap with confirmation.",
 		handler: async (rawArgs, ctx) => {
 			await runGoalTweak(rawArgs, ctx);
 		},

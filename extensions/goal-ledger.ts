@@ -31,6 +31,8 @@ export type GoalLedgerEvent =
   | { type: "goal_budget_changed"; goalId: string; oldBudget: number | null; newBudget: number | null; tokensUsed: number; at: string }
   | { type: "goal_budget_limited"; goalId: string; budget: number; tokensUsed: number; at: string }
   | { type: "goal_budget_warning"; goalId: string; budget: number; tokensUsed: number; pct: number; at: string }
+  | { type: "goal_cost_budget_limited"; goalId: string; maxCostUsd: number; costUsedUsd: number; at: string }
+  | { type: "goal_cost_budget_changed"; goalId: string; oldMaxCostUsd: number | null; newMaxCostUsd: number | null; costUsedUsd: number; at: string }
   | { type: "goal_stalled"; goalId: string; reason: string; at: string }
   | { type: "goal_blocked"; goalId: string; reason: string; source: "agent" | "system"; at: string }
   | { type: "oracle_started"; goalId: string; fingerprint: string; provider: string; model: string; thinkingLevel?: string; reason: string; at: string }
@@ -732,6 +734,10 @@ function isValidLedgerEvent(value: unknown): value is GoalLedgerEvent {
       return typeof obj.goalId === "string" && typeof obj.budget === "number" && typeof obj.tokensUsed === "number";
     case "goal_budget_warning":
       return typeof obj.goalId === "string" && typeof obj.budget === "number" && typeof obj.tokensUsed === "number" && typeof obj.pct === "number";
+    case "goal_cost_budget_limited":
+      return typeof obj.goalId === "string" && typeof obj.maxCostUsd === "number" && typeof obj.costUsedUsd === "number";
+    case "goal_cost_budget_changed":
+      return typeof obj.goalId === "string" && (obj.oldMaxCostUsd === null || typeof obj.oldMaxCostUsd === "number") && (obj.newMaxCostUsd === null || typeof obj.newMaxCostUsd === "number") && typeof obj.costUsedUsd === "number";
     case "goal_stalled":
       return typeof obj.goalId === "string" && typeof obj.reason === "string";
     case "goal_blocked":
